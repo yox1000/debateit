@@ -6,6 +6,7 @@ const appView = document.querySelector("#app-view");
 const surveyView = document.querySelector("#survey-view");
 const debateView = document.querySelector("#debate-view");
 const roomView = document.querySelector("#room-view");
+const profileView = document.querySelector("#profile-view");
 const nameField = document.querySelector("#name-field");
 const loginOptions = document.querySelector("#login-options");
 const formKicker = document.querySelector("#form-kicker");
@@ -13,17 +14,29 @@ const formTitle = document.querySelector("#form-title");
 const submitButton = document.querySelector("#submit-button");
 const switchText = document.querySelector("#switch-text");
 const formMessage = document.querySelector("#form-message");
-const signOutButton = document.querySelector("#sign-out");
 const myDebatesButton = document.querySelector("#my-debates");
+const headerProfileButton = document.querySelector("#header-profile");
+const headerProfileInitial = document.querySelector("#header-profile-initial");
 const appHeaderActions = document.querySelector("#app-header-actions");
 const debateHeaderActions = document.querySelector("#debate-header-actions");
+const profileHeaderActions = document.querySelector("#profile-header-actions");
 const accountName = document.querySelector("#account-name");
 const profileSource = document.querySelector("#profile-source");
 const profileStyle = document.querySelector("#profile-style");
 const profileSummary = document.querySelector("#profile-summary");
+const profileStats = document.querySelector("#profile-stats");
 const profileTopics = document.querySelector("#profile-topics");
 const profileSignals = document.querySelector("#profile-signals");
 const profileSuggestions = document.querySelector("#profile-suggestions");
+const profileEditForm = document.querySelector("#profile-edit-form");
+const cancelProfileEditButton = document.querySelector("#cancel-profile-edit");
+const profileEditMessage = document.querySelector("#profile-edit-message");
+const profileHomeButton = document.querySelector("#profile-home");
+const profileMenu = document.querySelector("#profile-menu");
+const profileMenuName = document.querySelector("#profile-menu-name");
+const profileMenuMeta = document.querySelector("#profile-menu-meta");
+const profileMenuEdit = document.querySelector("#profile-menu-edit");
+const profileMenuLogout = document.querySelector("#profile-menu-logout");
 const matchSource = document.querySelector("#match-source");
 const matchGrid = document.querySelector("#match-grid");
 const topicCount = document.querySelector("#topic-count");
@@ -61,42 +74,75 @@ const surveyForm = document.querySelector("#survey-form");
 const skipSurveyButton = document.querySelector("#skip-survey");
 const surveySubmitButton = surveyForm.querySelector('button[type="submit"]');
 
-const usersKey = "debateit.mockUsers";
 const sessionKey = "debateit.mockSession";
-const debatesKey = "debateit.localDebates";
-const matchQueueKey = "debateit.matchQueue";
-const proposalsKey = "debateit.matchProposals";
-const unreadKey = "debateit.unreadNotifications";
-const annotationsKey = "debateit.annotations";
-const cleanupKey = "debateit.cleanedFakeBlueGavel";
-const seedUsers = [
-  {
-    id: "empty-account",
-    name: "Test Account",
-    email: "",
-    password: "",
-    xp: 0,
-  },
-  {
-    id: "alex-account",
-    name: "Alex",
-    email: "alex@debate.it",
-    password: "test",
-    xp: 120,
-  },
-  {
-    id: "sam-account",
-    name: "Sam",
-    email: "sam@debate.it",
-    password: "test",
-    xp: 95,
-  },
+const detectedCountryCodeKey = "debateit.detectedCountryCode";
+const countryCodes = [
+  "AF", "AX", "AL", "DZ", "AS", "AD", "AO", "AI", "AQ", "AG", "AR", "AM", "AW", "AU", "AT", "AZ",
+  "BS", "BH", "BD", "BB", "BY", "BE", "BZ", "BJ", "BM", "BT", "BO", "BQ", "BA", "BW", "BV", "BR",
+  "IO", "BN", "BG", "BF", "BI", "CV", "KH", "CM", "CA", "KY", "CF", "TD", "CL", "CN", "CX", "CC",
+  "CO", "KM", "CG", "CD", "CK", "CR", "CI", "HR", "CU", "CW", "CY", "CZ", "DK", "DJ", "DM", "DO",
+  "EC", "EG", "SV", "GQ", "ER", "EE", "SZ", "ET", "FK", "FO", "FJ", "FI", "FR", "GF", "PF", "TF",
+  "GA", "GM", "GE", "DE", "GH", "GI", "GR", "GL", "GD", "GP", "GU", "GT", "GG", "GN", "GW", "GY",
+  "HT", "HM", "VA", "HN", "HK", "HU", "IS", "IN", "ID", "IR", "IQ", "IE", "IM", "IL", "IT", "JM",
+  "JP", "JE", "JO", "KZ", "KE", "KI", "KP", "KR", "KW", "KG", "LA", "LV", "LB", "LS", "LR", "LY",
+  "LI", "LT", "LU", "MO", "MG", "MW", "MY", "MV", "ML", "MT", "MH", "MQ", "MR", "MU", "YT", "MX",
+  "FM", "MD", "MC", "MN", "ME", "MS", "MA", "MZ", "MM", "NA", "NR", "NP", "NL", "NC", "NZ", "NI",
+  "NE", "NG", "NU", "NF", "MK", "MP", "NO", "OM", "PK", "PW", "PS", "PA", "PG", "PY", "PE", "PH",
+  "PN", "PL", "PT", "PR", "QA", "RE", "RO", "RU", "RW", "BL", "SH", "KN", "LC", "MF", "PM", "VC",
+  "WS", "SM", "ST", "SA", "SN", "RS", "SC", "SL", "SG", "SX", "SK", "SI", "SB", "SO", "ZA", "GS",
+  "SS", "ES", "LK", "SD", "SR", "SJ", "SE", "CH", "SY", "TW", "TJ", "TZ", "TH", "TL", "TG", "TK",
+  "TO", "TT", "TN", "TR", "TM", "TC", "TV", "UG", "UA", "AE", "GB", "US", "UM", "UY", "UZ", "VU",
+  "VE", "VN", "VG", "VI", "WF", "EH", "YE", "ZM", "ZW",
 ];
+const timezoneCountryMap = {
+  "America/New_York": "US",
+  "America/Chicago": "US",
+  "America/Denver": "US",
+  "America/Los_Angeles": "US",
+  "America/Phoenix": "US",
+  "America/Anchorage": "US",
+  "Pacific/Honolulu": "US",
+  "America/Toronto": "CA",
+  "America/Vancouver": "CA",
+  "America/Mexico_City": "MX",
+  "America/Sao_Paulo": "BR",
+  "Europe/London": "GB",
+  "Europe/Dublin": "IE",
+  "Europe/Paris": "FR",
+  "Europe/Berlin": "DE",
+  "Europe/Rome": "IT",
+  "Europe/Madrid": "ES",
+  "Europe/Amsterdam": "NL",
+  "Europe/Stockholm": "SE",
+  "Europe/Zurich": "CH",
+  "Europe/Warsaw": "PL",
+  "Europe/Kyiv": "UA",
+  "Europe/Istanbul": "TR",
+  "Asia/Dubai": "AE",
+  "Asia/Jerusalem": "IL",
+  "Asia/Kolkata": "IN",
+  "Asia/Shanghai": "CN",
+  "Asia/Tokyo": "JP",
+  "Asia/Seoul": "KR",
+  "Asia/Singapore": "SG",
+  "Australia/Sydney": "AU",
+  "Australia/Melbourne": "AU",
+  "Pacific/Auckland": "NZ",
+  "Africa/Lagos": "NG",
+  "Africa/Johannesburg": "ZA",
+  "Africa/Cairo": "EG",
+};
 
 let currentMode = "login";
 let activeUser = null;
 let topicCatalog = [];
 let topicCatalogVersion = "";
+let userDirectory = [];
+let userDebates = [];
+let userProposals = [];
+let messageCache = new Map();
+let annotationCache = new Map();
+let unreadProposalIds = new Set();
 let activeTopic = null;
 let selectedStance = "";
 let pendingMatch = null;
@@ -105,29 +151,209 @@ let debateFilters = new Set();
 let activeRoomDebateId = "";
 let activeCopilotTab = "notes";
 let pendingAnnotationSelection = null;
+let statePollId = 0;
+let documentGlowTimeout = 0;
+let documentStatusTimeout = 0;
+let realtimeSocket = null;
+let realtimeReconnectTimeout = 0;
+let realtimeManuallyClosed = false;
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error || "Request failed");
+  }
+
+  return data;
+}
 
 function getUsers() {
-  const savedUsers = JSON.parse(localStorage.getItem(usersKey) || "[]");
-  const savedEmails = new Set(savedUsers.map((user) => user.email));
-  const missingSeeds = seedUsers.filter((user) => !savedEmails.has(user.email));
-  const users = [...missingSeeds, ...savedUsers];
-
-  localStorage.setItem(usersKey, JSON.stringify(users));
-  return users;
+  return userDirectory;
 }
 
 function saveUsers(users) {
-  localStorage.setItem(usersKey, JSON.stringify(users));
+  userDirectory = users;
+}
+
+function getWebSocketUrl() {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/ws`;
+}
+
+function upsertById(items, item) {
+  if (!item?.id) {
+    return items;
+  }
+
+  const existingIndex = items.findIndex((candidate) => candidate.id === item.id);
+
+  if (existingIndex === -1) {
+    return [item, ...items];
+  }
+
+  const nextItems = [...items];
+  nextItems[existingIndex] = item;
+  return nextItems;
+}
+
+function appendById(items, item) {
+  if (!item?.id || items.some((candidate) => candidate.id === item.id)) {
+    return items;
+  }
+
+  return [...items, item];
+}
+
+function refreshOpenRealtimeViews() {
+  if (activeHeaderPanel === "mail") {
+    renderNotificationCenter();
+    notificationPanel.hidden = false;
+  } else if (activeHeaderPanel === "debates") {
+    renderMyDebates();
+    notificationPanel.hidden = false;
+  }
+
+  if (activeRoomDebateId) {
+    const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
+
+    if (debate) {
+      renderChatThread(debate);
+    }
+  }
+}
+
+async function handleRealtimeEvent(event) {
+  if (!activeUser) {
+    return;
+  }
+
+  if (event.type === "proposal_found") {
+    userProposals = upsertById(userProposals, event.proposal);
+
+    if (!event.proposal.acceptedBy?.includes(activeUser.id)) {
+      setUnread(activeUser.id, event.proposal.id);
+    }
+
+    await refreshUserState(false);
+    notificationBadge.hidden = !hasUnread();
+    refreshOpenRealtimeViews();
+    return;
+  }
+
+  if (event.type === "proposal_updated") {
+    userProposals = upsertById(userProposals, event.proposal);
+    await refreshUserState(false);
+    refreshOpenRealtimeViews();
+    return;
+  }
+
+  if (event.type === "debate_started") {
+    await refreshUserState(false);
+    glowMyDebatesIcon();
+    showMyDebatesStatus("Active", "active");
+    setUnread(activeUser.id, `active-${event.debateId}`);
+    notificationBadge.hidden = false;
+    refreshOpenRealtimeViews();
+    return;
+  }
+
+  if (event.type === "proposal_rejected" || event.type === "match_request_cancelled") {
+    await refreshUserState(false);
+    refreshOpenRealtimeViews();
+    notificationBadge.hidden = !hasUnread();
+    return;
+  }
+
+  if (event.type === "chat_message") {
+    const messages = getChatMessages(event.debateId);
+    saveChatMessages(event.debateId, appendById(messages, event.message));
+
+    if (event.debateId === activeRoomDebateId) {
+      const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
+      const role = getMessageRole(event.message);
+
+      if (debate) {
+        renderChatThread(debate);
+      }
+
+      turnStatus.textContent = role === "opponent" ? "Your turn" : "Waiting for opponent";
+    }
+    return;
+  }
+
+  if (event.type === "annotation_created") {
+    const annotations = getAnnotations(event.debateId);
+    saveAnnotations(event.debateId, upsertById(annotations, event.annotation));
+
+    if (event.debateId === activeRoomDebateId) {
+      const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
+
+      if (debate) {
+        renderChatThread(debate);
+      }
+    }
+  }
+}
+
+function connectRealtime() {
+  if (!activeUser || !("WebSocket" in window)) {
+    return;
+  }
+
+  if (realtimeSocket?.readyState === WebSocket.OPEN || realtimeSocket?.readyState === WebSocket.CONNECTING) {
+    return;
+  }
+
+  realtimeManuallyClosed = false;
+  window.clearTimeout(realtimeReconnectTimeout);
+
+  realtimeSocket = new WebSocket(getWebSocketUrl());
+
+  realtimeSocket.addEventListener("open", () => {
+    realtimeSocket.send(JSON.stringify({ type: "subscribe", userId: activeUser.id }));
+  });
+
+  realtimeSocket.addEventListener("message", (messageEvent) => {
+    try {
+      handleRealtimeEvent(JSON.parse(messageEvent.data)).catch(() => {});
+    } catch {
+      // Ignore malformed realtime messages so one bad event does not break the UI.
+    }
+  });
+
+  realtimeSocket.addEventListener("close", () => {
+    realtimeSocket = null;
+
+    if (!realtimeManuallyClosed && activeUser) {
+      realtimeReconnectTimeout = window.setTimeout(connectRealtime, 1500);
+    }
+  });
+}
+
+function disconnectRealtime() {
+  realtimeManuallyClosed = true;
+  window.clearTimeout(realtimeReconnectTimeout);
+
+  if (realtimeSocket) {
+    realtimeSocket.close();
+    realtimeSocket = null;
+  }
 }
 
 function getLocalDebates() {
-  const key = `${debatesKey}.${activeUser?.id || "anonymous"}`;
-  return JSON.parse(localStorage.getItem(key) || "[]");
+  return userDebates;
 }
 
 function saveLocalDebates(debates) {
-  const key = `${debatesKey}.${activeUser?.id || "anonymous"}`;
-  localStorage.setItem(key, JSON.stringify(debates));
+  userDebates = debates;
 }
 
 function upsertLocalDebate(debate) {
@@ -147,23 +373,21 @@ function upsertLocalDebate(debate) {
 }
 
 function getMatchQueue() {
-  return JSON.parse(localStorage.getItem(matchQueueKey) || "[]");
+  return pendingMatch ? [pendingMatch] : [];
 }
 
 function saveMatchQueue(queue) {
-  localStorage.setItem(matchQueueKey, JSON.stringify(queue));
-}
-
-function getDebateStorageKey(userId) {
-  return `${debatesKey}.${userId}`;
+  pendingMatch = queue.at(-1) || null;
 }
 
 function getDebatesForUser(userId) {
-  return JSON.parse(localStorage.getItem(getDebateStorageKey(userId)) || "[]");
+  return userId === activeUser?.id ? userDebates : [];
 }
 
 function saveDebatesForUser(userId, debates) {
-  localStorage.setItem(getDebateStorageKey(userId), JSON.stringify(debates));
+  if (userId === activeUser?.id) {
+    userDebates = debates;
+  }
 }
 
 function upsertDebateForUser(userId, debate) {
@@ -183,11 +407,11 @@ function upsertDebateForUser(userId, debate) {
 }
 
 function getMatchProposals() {
-  return JSON.parse(localStorage.getItem(proposalsKey) || "[]");
+  return userProposals;
 }
 
 function saveMatchProposals(proposals) {
-  localStorage.setItem(proposalsKey, JSON.stringify(proposals));
+  userProposals = proposals;
 }
 
 function getUserProposals(userId = activeUser?.id) {
@@ -199,51 +423,50 @@ function getPendingUserProposals(userId = activeUser?.id) {
 }
 
 function getUnreadUsers() {
-  return JSON.parse(localStorage.getItem(unreadKey) || "[]");
+  return hasUnread() ? [activeUser?.id] : [];
 }
 
-function setUnread(userId) {
-  localStorage.setItem(unreadKey, JSON.stringify(Array.from(new Set([...getUnreadUsers(), userId]))));
+function setUnread(_userId, proposalId = null) {
+  if (proposalId) {
+    unreadProposalIds.add(proposalId);
+  }
 }
 
-function clearUnread(userId = activeUser?.id) {
-  localStorage.setItem(unreadKey, JSON.stringify(getUnreadUsers().filter((candidate) => candidate !== userId)));
+function clearUnread(_userId = activeUser?.id) {
+  unreadProposalIds.clear();
 }
 
 function hasUnread(userId = activeUser?.id) {
-  return getUnreadUsers().includes(userId);
+  return Boolean(userId) && unreadProposalIds.size > 0;
+}
+
+function glowMyDebatesIcon() {
+  window.clearTimeout(documentGlowTimeout);
+  myDebatesButton.classList.add("attention-glow");
+  documentGlowTimeout = window.setTimeout(() => {
+    myDebatesButton.classList.remove("attention-glow");
+  }, 5000);
+}
+
+function showMyDebatesStatus(label, tone = "pending", mode = "label") {
+  window.clearTimeout(documentStatusTimeout);
+  myDebatesButton.dataset.status = label;
+  myDebatesButton.dataset.statusTone = tone;
+  myDebatesButton.dataset.statusMode = mode;
+  documentStatusTimeout = window.setTimeout(() => {
+    delete myDebatesButton.dataset.status;
+    delete myDebatesButton.dataset.statusTone;
+    delete myDebatesButton.dataset.statusMode;
+  }, 5000);
 }
 
 function cleanupFakeOpponentDebates() {
-  if (localStorage.getItem(cleanupKey)) {
-    return;
-  }
-
-  Object.keys(localStorage)
-    .filter((key) => key.startsWith(`${debatesKey}.`))
-    .forEach((key) => {
-      const debates = JSON.parse(localStorage.getItem(key) || "[]").filter(
-        (debate) =>
-          !String(debate.detail || "").includes("Blue Gavel") &&
-          !String(debate.detail || "").includes("Match accepted. Debate room setup pending."),
-      );
-      localStorage.setItem(key, JSON.stringify(debates));
-    });
-
-  localStorage.setItem(cleanupKey, "true");
+  // Old localStorage cleanup is no longer needed now that debate state is server-backed.
 }
 
 function updateStoredUser(user) {
-  const users = getUsers();
-  const userIndex = users.findIndex((candidate) => candidate.id === user.id);
-
-  if (userIndex === -1) {
-    return user;
-  }
-
-  users[userIndex] = user;
-  saveUsers(users);
   activeUser = user;
+  userDirectory = [user, ...userDirectory.filter((candidate) => candidate.id !== user.id)];
   return user;
 }
 
@@ -267,6 +490,186 @@ function formatSource(source) {
 
 function formatStatus(status) {
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function getExperienceLevel(xp = 0) {
+  if (xp >= 250) {
+    return { label: "Arena Veteran", next: null, progress: 100 };
+  }
+
+  if (xp >= 100) {
+    return { label: "Policy Builder", next: 250, progress: Math.round((xp / 250) * 100) };
+  }
+
+  if (xp >= 50) {
+    return { label: "Calm Rebutter", next: 100, progress: Math.round((xp / 100) * 100) };
+  }
+
+  return { label: "Newcomer", next: 50, progress: Math.round((xp / 50) * 100) };
+}
+
+function countryCodeToFlag(code) {
+  return code
+    .toUpperCase()
+    .replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt(0)));
+}
+
+function getCountryDisplayName(code) {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) || code;
+  } catch {
+    return code;
+  }
+}
+
+function getCountryNameByCode(code) {
+  return getCountryDisplayName(code.toUpperCase());
+}
+
+function normalizeCountryCode(code) {
+  const normalizedCode = String(code || "").trim().toUpperCase();
+  return countryCodes.includes(normalizedCode) ? normalizedCode : "";
+}
+
+function getCountryCodeByName(name) {
+  const normalizedName = String(name || "").trim().toLowerCase();
+  return countryCodes.find((code) => getCountryDisplayName(code).toLowerCase() === normalizedName) || "";
+}
+
+function getBrowserRegionCode() {
+  return (
+    navigator.languages
+      ?.map((language) => {
+        try {
+          return normalizeCountryCode(new Intl.Locale(language).region);
+        } catch {
+          return "";
+        }
+      })
+      .find(Boolean) || ""
+  );
+}
+
+function getDetectedCountryName() {
+  const savedCountryCode = normalizeCountryCode(localStorage.getItem(detectedCountryCodeKey));
+  const localeRegion = getBrowserRegionCode();
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const countryCode = savedCountryCode || localeRegion || timezoneCountryMap[timezone] || "";
+
+  return countryCode ? getCountryNameByCode(countryCode) : "";
+}
+
+function setCountrySelectValue(select, countryName) {
+  const option = Array.from(select.options).find((candidate) => candidate.value === countryName);
+
+  if (option) {
+    select.value = countryName;
+  }
+}
+
+async function getGeolocatedCountryName() {
+  if (!("geolocation" in navigator) || !window.isSecureContext) {
+    return "";
+  }
+
+  const coords = await new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve(position.coords),
+      () => resolve(null),
+      {
+        enableHighAccuracy: false,
+        maximumAge: 24 * 60 * 60 * 1000,
+        timeout: 6000,
+      },
+    );
+  });
+
+  if (!coords) {
+    return "";
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(
+        coords.latitude,
+      )}&longitude=${encodeURIComponent(coords.longitude)}&localityLanguage=en`,
+      { cache: "no-store" },
+    );
+
+    if (!response.ok) {
+      return "";
+    }
+
+    const data = await response.json();
+    const countryCode = normalizeCountryCode(data.countryCode);
+
+    if (!countryCode) {
+      return "";
+    }
+
+    localStorage.setItem(detectedCountryCodeKey, countryCode);
+    return getCountryNameByCode(countryCode);
+  } catch {
+    return "";
+  }
+}
+
+function applyDetectedCountryDefault(select, fallbackCountry) {
+  const startingValue = select.value;
+
+  getGeolocatedCountryName().then((countryName) => {
+    if (!countryName || (select.value && select.value !== startingValue && select.value !== fallbackCountry)) {
+      return;
+    }
+
+    setCountrySelectValue(select, countryName);
+  });
+}
+
+function populateCountrySelect() {
+  const select = profileEditForm.elements.country;
+  const selectedValue = select.value;
+  const countries = countryCodes
+    .map((code) => ({
+      code,
+      name: getCountryDisplayName(code),
+      flag: countryCodeToFlag(code),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  select.replaceChildren();
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Select country";
+  select.append(placeholder);
+
+  countries.forEach((country) => {
+    const option = document.createElement("option");
+    option.value = country.name;
+    option.textContent = `${country.flag} ${country.name}`;
+    select.append(option);
+  });
+
+  select.value = selectedValue;
+}
+
+function fillProfileEditForm(user) {
+  const profile = user.debateProfile || {};
+  const countrySelect = profileEditForm.elements.country;
+  profileEditForm.elements.name.value = user.name || "";
+  populateCountrySelect();
+  if (user.country) {
+    setCountrySelectValue(countrySelect, user.country);
+  } else {
+    const detectedCountry = getDetectedCountryName();
+    setCountrySelectValue(countrySelect, detectedCountry);
+    applyDetectedCountryDefault(countrySelect, detectedCountry);
+  }
+  profileEditForm.elements.debateStyle.value = profile.debateStyle || "Exploratory";
+  profileEditForm.elements.interests.value = (profile.topics?.length ? profile.topics : user.interests || []).join(", ");
+  profileEditForm.elements.debateBio.value = user.debateBio || "";
+  profileEditMessage.textContent = "";
 }
 
 function createChip(text) {
@@ -296,19 +699,52 @@ function mountNotificationCenter(container) {
   }
 }
 
+function mountProfileButton(container) {
+  if (!container) {
+    return;
+  }
+
+  if (headerProfileButton.parentElement !== container) {
+    const homeButton = container.querySelector(".home-button");
+
+    if (homeButton) {
+      homeButton.before(headerProfileButton);
+    } else {
+      container.append(headerProfileButton);
+    }
+  }
+
+  if (profileMenu.parentElement !== container) {
+    container.append(profileMenu);
+  }
+}
+
+function updateHeaderProfile(user = activeUser) {
+  const name = user?.name || user?.email || "Debater";
+  const level = getExperienceLevel(user?.xp || 0);
+  headerProfileInitial.textContent = name.trim().charAt(0).toUpperCase() || "D";
+  headerProfileButton.title = `${name} profile`;
+  profileMenuName.textContent = name;
+  profileMenuMeta.textContent = `${level.label} • ${user?.xp || 0} XP`;
+}
+
 function renderNotificationCenter() {
   activeHeaderPanel = "mail";
   notificationPanel.querySelector(".notification-head strong").textContent = "Match inbox";
-  const proposals = getPendingUserProposals();
+  const proposals = getUserProposals();
   const activeDebates = getLocalDebates().filter((debate) => debate.status === "active");
   notificationBadge.hidden = !hasUnread();
   notificationPanel.hidden = true;
   notificationList.replaceChildren();
 
   if (proposals.length) {
-    notificationState.textContent = "Potential match";
+    notificationState.textContent = proposals.some((proposal) => !proposal.acceptedBy?.includes(activeUser.id))
+      ? "Potential match"
+      : "Waiting";
     proposals.forEach((proposal) => {
       const opponent = proposal.users.find((user) => user.userId !== activeUser.id);
+      const accepted = proposal.acceptedBy || [];
+      const currentAccepted = accepted.includes(activeUser.id);
       const card = document.createElement("article");
       const body = document.createElement("button");
       const title = document.createElement("strong");
@@ -329,8 +765,11 @@ function renderNotificationCenter() {
       ignore.type = "button";
       deny.type = "button";
       title.textContent = proposal.topicTitle;
-      detail.textContent = `Potential match with ${getUserName(opponent.userId)} • They argue ${opponent.stance}`;
-      accept.textContent = "Accept";
+      detail.textContent = currentAccepted
+        ? `Waiting for ${getUserName(opponent.userId)} to accept • They argue ${opponent.stance}`
+        : `Potential match with ${getUserName(opponent.userId)} • They argue ${opponent.stance}`;
+      accept.textContent = currentAccepted ? "Waiting" : "Accept";
+      accept.disabled = currentAccepted;
       ignore.textContent = "Ignore";
       deny.textContent = "Deny";
       body.append(title, detail);
@@ -378,6 +817,12 @@ function renderNotificationCenter() {
 }
 
 function getMockUserStats(userId) {
+  const proposalUser = userProposals.flatMap((proposal) => proposal.users || []).find((user) => user.userId === userId);
+
+  if (proposalUser?.stats) {
+    return proposalUser.stats;
+  }
+
   const stats = {
     "empty-account": { country: "United States", since: "2026", xp: 12, level: "Newcomer" },
     "alex-account": { country: "United States", since: "2026", xp: 120, level: "Policy Builder" },
@@ -412,6 +857,8 @@ function renderProposalDetails(proposalId) {
   const title = document.createElement("h3");
   const detail = document.createElement("p");
   const meta = document.createElement("dl");
+  const interests = document.createElement("div");
+  const bio = document.createElement("p");
   const xp = document.createElement("div");
   const actions = document.createElement("div");
   const accept = document.createElement("button");
@@ -419,6 +866,8 @@ function renderProposalDetails(proposalId) {
 
   card.className = "notification-card";
   meta.className = "opponent-meta";
+  interests.className = "opponent-interests";
+  bio.className = "opponent-bio";
   xp.className = "experience-bar";
   actions.className = "notification-actions";
   accept.className = "primary-button compact-button";
@@ -434,6 +883,7 @@ function renderProposalDetails(proposalId) {
     ["XP", String(stats.xp)],
     ["Country", stats.country],
     ["User since", stats.since],
+    ["Style", stats.debateStyle || "Exploratory"],
   ].forEach(([label, value]) => {
     const term = document.createElement("dt");
     const description = document.createElement("dd");
@@ -441,6 +891,11 @@ function renderProposalDetails(proposalId) {
     description.textContent = value;
     meta.append(term, description);
   });
+
+  (stats.interests?.length ? stats.interests : ["General debate"]).slice(0, 4).forEach((topic) => {
+    interests.append(createChip(topic));
+  });
+  bio.textContent = stats.debateBio || stats.summary || "No debate bio added yet.";
 
   accept.textContent = accepted.includes(activeUser.id) ? "Accepted" : "Accept";
   accept.disabled = accepted.includes(activeUser.id);
@@ -450,7 +905,7 @@ function renderProposalDetails(proposalId) {
   reject.addEventListener("click", () => rejectProposal(proposal.id));
 
   actions.append(accept, reject);
-  card.append(title, detail, meta, xp, actions);
+  card.append(title, detail, meta, interests, bio, xp, actions);
   notificationList.append(card);
 }
 
@@ -464,7 +919,8 @@ function createDebateRecord(debate) {
 }
 
 function getUserName(userId) {
-  return getUsers().find((user) => user.id === userId)?.name || "Opponent";
+  const proposalUser = userProposals.flatMap((proposal) => proposal.users || []).find((user) => user.userId === userId);
+  return proposalUser?.name || getUsers().find((user) => user.id === userId)?.name || "Opponent";
 }
 
 function removePendingDebate(userId, requestId) {
@@ -565,70 +1021,40 @@ function createProposalFromMatch(currentRequest, opponentRequest) {
   return proposal;
 }
 
-function acceptProposal(proposalId) {
-  const proposals = getMatchProposals();
-  const proposal = proposals.find((candidate) => candidate.id === proposalId);
-
-  if (!proposal) {
-    return;
-  }
-
-  proposal.acceptedBy = Array.from(new Set([...(proposal.acceptedBy || []), activeUser.id]));
-
-  if (proposal.acceptedBy.length === proposal.users.length) {
-    const [first, second] = proposal.users;
-    createActiveDebateFromMatch(
-      {
-        id: proposal.id,
-        userId: first.userId,
-        topicId: proposal.topicId,
-        topicTitle: proposal.topicTitle,
-        stance: first.stance,
-      },
-      {
-        id: proposal.id,
-        userId: second.userId,
-        topicId: proposal.topicId,
-        topicTitle: proposal.topicTitle,
-        stance: second.stance,
-      },
-    );
-    saveMatchProposals(proposals.filter((candidate) => candidate.id !== proposalId));
-    notificationState.textContent = "Active";
-  } else {
-    saveMatchProposals(proposals);
-    upsertLocalDebate({
-      id: proposal.id,
-      status: "pending",
-      topicTitle: proposal.topicTitle,
-      detail: "You accepted. Waiting for the other side.",
-      updatedAt: Date.now(),
-    });
-  }
-
-  renderNotificationCenter();
+async function acceptProposal(proposalId) {
+  const result = await apiRequest(`/api/proposals/${encodeURIComponent(proposalId)}/accept`, {
+    method: "POST",
+    body: JSON.stringify({ userId: activeUser.id }),
+  });
+  await refreshUserState(false);
   clearUnread();
   notificationBadge.hidden = true;
+
+  if (result.debateId) {
+    glowMyDebatesIcon();
+    showMyDebatesStatus("Active", "active");
+    renderNotificationCenter();
+  } else {
+    showMyDebatesStatus("", "pending", "dot");
+    renderProposalDetails(proposalId);
+  }
+
   notificationPanel.hidden = false;
 }
 
-function rejectProposal(proposalId) {
-  const proposal = getMatchProposals().find((candidate) => candidate.id === proposalId);
-
-  saveMatchProposals(getMatchProposals().filter((candidate) => candidate.id !== proposalId));
-
-  if (proposal) {
-    proposal.users.forEach((user) => removePendingDebate(user.userId, proposal.id));
-  }
-
-  renderNotificationCenter();
+async function rejectProposal(proposalId) {
+  await apiRequest(`/api/proposals/${encodeURIComponent(proposalId)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ userId: activeUser.id }),
+  });
+  await refreshUserState(false);
   clearUnread();
   notificationBadge.hidden = true;
+  renderNotificationCenter();
   notificationPanel.hidden = false;
 }
 
 function getDebateRecords() {
-  syncAcceptedProposals();
   return getLocalDebates().map(createDebateRecord);
 }
 
@@ -706,10 +1132,13 @@ function createCancelButton() {
   return cancel;
 }
 
-function clearPendingMatch(updateStatus) {
+async function clearPendingMatch(updateStatus) {
   if (pendingMatch) {
-    saveMatchQueue(getMatchQueue().filter((request) => request.id !== pendingMatch.id));
-    removePendingDebate(activeUser.id, pendingMatch.id);
+    await apiRequest(`/api/match-requests/${encodeURIComponent(pendingMatch.id)}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ userId: activeUser.id }),
+    });
+    await refreshUserState(false);
   }
 
   pendingMatch = null;
@@ -737,6 +1166,14 @@ function renderProfile(user) {
   profileStyle.textContent = profile?.debateStyle || "Profile pending";
   profileSummary.textContent =
     profile?.summary || "Complete the first-login survey to generate debate recommendations.";
+  profileStats.replaceChildren();
+  const level = getExperienceLevel(user.xp || 0);
+  [
+    `${level.label}`,
+    `${user.xp || 0} XP`,
+    user.country || "Country unset",
+  ].forEach((value) => profileStats.append(createChip(value)));
+  fillProfileEditForm(user);
 
   profileTopics.replaceChildren();
   (topics.length ? topics : ["General debate"]).forEach((topic) => {
@@ -975,30 +1412,99 @@ async function loadMatches(user) {
   }
 }
 
+async function refreshUserState(markUnread = false) {
+  if (!activeUser) {
+    userDebates = [];
+    userProposals = [];
+    return;
+  }
+
+  const [debatesData, proposalsData] = await Promise.all([
+    apiRequest(`/api/users/${encodeURIComponent(activeUser.id)}/debates`),
+    apiRequest(`/api/users/${encodeURIComponent(activeUser.id)}/proposals`),
+  ]);
+  const previousProposalIds = new Set(userProposals.map((proposal) => proposal.id));
+  const previousActiveIds = new Set(
+    userDebates.filter((debate) => debate.status === "active").map((debate) => debate.id),
+  );
+  const hadPreviousDebates = userDebates.length > 0;
+
+  userDebates = debatesData.debates || [];
+  userProposals = proposalsData.proposals || [];
+
+  if (markUnread) {
+    userProposals.forEach((proposal) => {
+      if (!previousProposalIds.has(proposal.id) && !proposal.acceptedBy?.includes(activeUser.id)) {
+        unreadProposalIds.add(proposal.id);
+      }
+    });
+  }
+
+  const newActiveDebate = userDebates.find(
+    (debate) => debate.status === "active" && !previousActiveIds.has(debate.id),
+  );
+
+  if (hadPreviousDebates && newActiveDebate) {
+    glowMyDebatesIcon();
+    showMyDebatesStatus("Active", "active");
+    setUnread(activeUser.id, `active-${newActiveDebate.id}`);
+  }
+
+  notificationBadge.hidden = !hasUnread();
+}
+
+function startStatePolling() {
+  window.clearInterval(statePollId);
+  statePollId = window.setInterval(() => {
+    if (activeUser) {
+      refreshUserState(true).catch(() => {});
+    }
+  }, 5000);
+}
+
+function stopStatePolling() {
+  window.clearInterval(statePollId);
+  statePollId = 0;
+}
+
 async function showApp(user) {
   activeUser = user;
+  connectRealtime();
   mountNotificationCenter(appHeaderActions);
-  notificationBadge.hidden = !hasUnread();
+  mountProfileButton(appHeaderActions);
+  updateHeaderProfile(user);
   accountName.textContent = user.name || "Debater";
   renderProfile(user);
   await loadTopicCatalog();
+  await refreshUserState(true);
+  startStatePolling();
   loadMatches(activeUser);
   setNotificationVisibility(true);
   authView.hidden = true;
   surveyView.hidden = true;
   debateView.hidden = true;
   roomView.hidden = true;
+  profileView.hidden = true;
   appView.hidden = false;
   document.title = "Debate.it | Home";
 }
 
 function showAuth() {
+  stopStatePolling();
+  disconnectRealtime();
   activeUser = null;
+  userDebates = [];
+  userProposals = [];
+  messageCache = new Map();
+  annotationCache = new Map();
+  unreadProposalIds.clear();
+  profileMenu.hidden = true;
   setNotificationVisibility(false);
   authView.hidden = false;
   surveyView.hidden = true;
   debateView.hidden = true;
   roomView.hidden = true;
+  profileView.hidden = true;
   appView.hidden = true;
   document.title = "Debate.it | Login";
 }
@@ -1010,14 +1516,39 @@ function showSurvey(user) {
   appView.hidden = true;
   debateView.hidden = true;
   roomView.hidden = true;
+  profileView.hidden = true;
   surveyView.hidden = false;
   document.title = "Debate.it | Survey";
+}
+
+function showProfilePage() {
+  if (!activeUser) {
+    showAuth();
+    return;
+  }
+
+  mountNotificationCenter(profileHeaderActions);
+  mountProfileButton(profileHeaderActions);
+  updateHeaderProfile();
+  fillProfileEditForm(activeUser);
+  profileMenu.hidden = true;
+  notificationPanel.hidden = true;
+  authView.hidden = true;
+  appView.hidden = true;
+  surveyView.hidden = true;
+  debateView.hidden = true;
+  roomView.hidden = true;
+  profileView.hidden = false;
+  setNotificationVisibility(true);
+  document.title = "Debate.it | Profile";
 }
 
 function showDebateTopic(topic, prompt) {
   activeTopic = topic;
   selectedStance = "";
   mountNotificationCenter(debateHeaderActions);
+  mountProfileButton(debateHeaderActions);
+  updateHeaderProfile();
   debateCategory.textContent = topic.category || "Topic";
   debateTitle.textContent = topic.title || "Selected debate topic";
   debatePrompt.textContent = prompt || "Choose a side to start a debate on this topic.";
@@ -1035,12 +1566,13 @@ function showDebateTopic(topic, prompt) {
   appView.hidden = true;
   surveyView.hidden = true;
   roomView.hidden = true;
+  profileView.hidden = true;
   debateView.hidden = false;
   setNotificationVisibility(true);
   document.title = "Debate.it | Debate";
 }
 
-function showDebateRoom(debateId) {
+async function showDebateRoom(debateId) {
   const debate = getLocalDebates().find((candidate) => candidate.id === debateId);
 
   if (!debate || debate.status !== "active") {
@@ -1048,16 +1580,20 @@ function showDebateRoom(debateId) {
   }
 
   mountNotificationCenter(roomHeaderActions);
+  mountProfileButton(roomHeaderActions);
+  updateHeaderProfile();
   activeRoomDebateId = debateId;
   pendingAnnotationSelection = null;
   roomTitle.textContent = debate.topicTitle;
   roomDetail.textContent = debate.detail;
+  await loadRoomState(debateId);
   renderChatThread(debate);
   notificationPanel.hidden = true;
   authView.hidden = true;
   appView.hidden = true;
   surveyView.hidden = true;
   debateView.hidden = true;
+  profileView.hidden = true;
   roomView.hidden = false;
   setNotificationVisibility(true);
   document.title = "Debate.it | Room";
@@ -1072,7 +1608,7 @@ function createLocalId(prefix) {
 }
 
 function getChatMessages(debateId) {
-  const saved = JSON.parse(localStorage.getItem(getChatKey(debateId)) || "null");
+  const saved = messageCache.get(debateId) || null;
 
   if (saved?.length) {
     let changed = false;
@@ -1109,11 +1645,7 @@ function getChatMessages(debateId) {
 }
 
 function saveChatMessages(debateId, messages) {
-  localStorage.setItem(getChatKey(debateId), JSON.stringify(messages));
-}
-
-function getAnnotationKey(debateId) {
-  return `${annotationsKey}.${debateId}`;
+  messageCache.set(debateId, messages);
 }
 
 function getAnnotations(debateId = activeRoomDebateId) {
@@ -1121,11 +1653,21 @@ function getAnnotations(debateId = activeRoomDebateId) {
     return [];
   }
 
-  return JSON.parse(localStorage.getItem(getAnnotationKey(debateId)) || "[]");
+  return annotationCache.get(debateId) || [];
 }
 
 function saveAnnotations(debateId, annotations) {
-  localStorage.setItem(getAnnotationKey(debateId), JSON.stringify(annotations));
+  annotationCache.set(debateId, annotations);
+}
+
+async function loadRoomState(debateId) {
+  const [messagesData, annotationsData] = await Promise.all([
+    apiRequest(`/api/debates/${encodeURIComponent(debateId)}/messages`),
+    apiRequest(`/api/debates/${encodeURIComponent(debateId)}/annotations`),
+  ]);
+
+  messageCache.set(debateId, messagesData.messages || []);
+  annotationCache.set(debateId, annotationsData.annotations || []);
 }
 
 function renderMessageText(message) {
@@ -1213,19 +1755,23 @@ function captureAnnotationSelection() {
   renderCopilot(getChatMessages(activeRoomDebateId), getLocalDebates().find((debate) => debate.id === activeRoomDebateId));
 }
 
-function savePendingAnnotation(note) {
+async function savePendingAnnotation(note) {
   if (!pendingAnnotationSelection || !note.trim()) {
     return;
   }
 
   const debateId = pendingAnnotationSelection.debateId;
-  const annotations = getAnnotations(debateId);
-  annotations.unshift({
-    ...pendingAnnotationSelection,
-    id: createLocalId("note"),
-    note: note.trim(),
-    createdAt: Date.now(),
+  const { annotation } = await apiRequest(`/api/debates/${encodeURIComponent(debateId)}/annotations`, {
+    method: "POST",
+    body: JSON.stringify({
+      ...pendingAnnotationSelection,
+      userId: activeUser.id,
+      note: note.trim(),
+    }),
   });
+
+  const annotations = getAnnotations(debateId);
+  annotations.unshift(annotation);
   saveAnnotations(debateId, annotations);
   pendingAnnotationSelection = null;
   window.getSelection()?.removeAllRanges();
@@ -1257,6 +1803,28 @@ function scrollToAnnotation(annotationId, target = "note") {
   }
 }
 
+function getMessageRole(message) {
+  if (message.speaker === "system") {
+    return "system";
+  }
+
+  if (message.userId && activeUser?.id) {
+    return message.userId === activeUser.id ? "me" : "opponent";
+  }
+
+  return message.speaker === "opponent" ? "opponent" : "me";
+}
+
+function getMessageLabel(message) {
+  const role = getMessageRole(message);
+
+  if (role === "system") {
+    return "System";
+  }
+
+  return role === "me" ? "You" : "Opponent";
+}
+
 function renderChatThread(debate) {
   const messages = getChatMessages(debate.id);
 
@@ -1265,12 +1833,13 @@ function renderChatThread(debate) {
     const bubble = document.createElement("article");
     const label = document.createElement("span");
     const text = document.createElement("p");
+    const role = getMessageRole(message);
 
-    bubble.className = `chat-message ${message.speaker}`;
-    label.textContent = message.speaker === "me" ? "You" : message.speaker === "opponent" ? "Opponent" : "System";
+    bubble.className = `chat-message ${role}`;
+    label.textContent = getMessageLabel(message);
     text.className = "message-text";
     text.dataset.messageId = message.id;
-    text.dataset.speaker = message.speaker;
+    text.dataset.speaker = role;
     text.append(renderMessageText(message));
     bubble.append(label, text);
     chatThread.append(bubble);
@@ -1279,15 +1848,22 @@ function renderChatThread(debate) {
   renderCopilot(messages, debate);
 }
 
-function addChatMessage(speaker, text) {
+async function addChatMessage(speaker, text) {
   if (!activeRoomDebateId || !text.trim()) {
     return;
   }
 
   const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
+  const { message } = await apiRequest(`/api/debates/${encodeURIComponent(activeRoomDebateId)}/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      userId: speaker === "me" ? activeUser.id : null,
+      speaker: speaker === "system" ? "system" : "debater",
+      text: text.trim(),
+    }),
+  });
   const messages = getChatMessages(activeRoomDebateId);
-  messages.push({ id: createLocalId("message"), speaker, text: text.trim(), at: Date.now() });
-  saveChatMessages(activeRoomDebateId, messages);
+  saveChatMessages(activeRoomDebateId, appendById(messages, message));
 
   if (debate) {
     renderChatThread(debate);
@@ -1301,12 +1877,12 @@ function getDebateSide(detail = "") {
 function summarizeMessage(message) {
   const text = message.text.trim();
   const compact = text.length > 116 ? `${text.slice(0, 113)}...` : text;
-  return `${message.speaker === "me" ? "You" : "Opponent"}: ${compact}`;
+  return `${getMessageLabel(message)}: ${compact}`;
 }
 
 function findFactSignals(messages) {
   const claimWords = ["study", "studies", "data", "evidence", "research", "percent", "%", "always", "never", "prove"];
-  const debateMessages = messages.filter((message) => message.speaker !== "system");
+  const debateMessages = messages.filter((message) => getMessageRole(message) !== "system");
   const flagged = debateMessages.filter((message) =>
     claimWords.some((word) => message.text.toLowerCase().includes(word)),
   );
@@ -1329,17 +1905,17 @@ function findFactSignals(messages) {
 }
 
 function buildCopilotState(messages, debate = {}) {
-  const debateMessages = messages.filter((message) => message.speaker !== "system");
+  const debateMessages = messages.filter((message) => getMessageRole(message) !== "system");
   const recent = debateMessages.slice(-4);
   const last = debateMessages.at(-1);
   const side = getDebateSide(debate.detail);
-  const unansweredOpponent = [...debateMessages].reverse().find((message) => message.speaker === "opponent");
+  const unansweredOpponent = [...debateMessages].reverse().find((message) => getMessageRole(message) === "opponent");
   const notes = recent.length
     ? recent.map(summarizeMessage)
     : [`You are arguing ${side}. Start with one clear claim and one reason.`];
   const factChecks = findFactSignals(messages);
   const focus =
-    last?.speaker === "opponent"
+    getMessageRole(last || {}) === "opponent"
       ? "Answer the opponent's last point directly before adding a new argument."
       : unansweredOpponent
         ? "Tie your next point back to the strongest opponent claim so the debate does not drift."
@@ -1412,9 +1988,9 @@ function renderAnnotationNotes() {
     cancel.textContent = "Cancel";
     actions.append(save, cancel);
     editor.append(quote, textarea, actions);
-    editor.addEventListener("submit", (event) => {
+    editor.addEventListener("submit", async (event) => {
       event.preventDefault();
-      savePendingAnnotation(textarea.value);
+      await savePendingAnnotation(textarea.value);
     });
     cancel.addEventListener("click", () => {
       pendingAnnotationSelection = null;
@@ -1482,20 +2058,6 @@ function renderCopilot(messages, debate = {}) {
   copilotContent.append(renderAnnotationNotes());
 }
 
-function addMockOpponentReply() {
-  const replies = [
-    "I see the point, but I think the tradeoff is being understated. What evidence supports that claim?",
-    "That argument depends on who is affected most. I would push for clearer limits before accepting it.",
-    "I agree with part of that, but the stronger counterpoint is whether the policy works in practice.",
-  ];
-  const reply = replies[Math.floor(Math.random() * replies.length)];
-
-  window.setTimeout(() => {
-    addChatMessage("opponent", reply);
-    turnStatus.textContent = "Your turn";
-  }, 700);
-}
-
 function startSpeechToText() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -1532,23 +2094,22 @@ function startSpeechToText() {
   recognition.start();
 }
 
-function startSession(user) {
+async function startSession(user) {
   localStorage.setItem(
     sessionKey,
     JSON.stringify({
       userId: user.id,
-      email: user.email,
     }),
   );
 
   if (user.surveyCompleted) {
-    showApp(user);
+    await showApp(user);
   } else {
     showSurvey(user);
   }
 }
 
-function restoreSession() {
+async function restoreSession() {
   const session = JSON.parse(localStorage.getItem(sessionKey) || "null");
 
   if (!session) {
@@ -1556,15 +2117,15 @@ function restoreSession() {
     return;
   }
 
-  const user = getUsers().find((candidate) => candidate.id === session.userId);
+  try {
+    const { user } = await apiRequest(`/api/users/${encodeURIComponent(session.userId)}`);
 
-  if (user) {
     if (user.surveyCompleted) {
-      showApp(user);
+      await showApp(user);
     } else {
       showSurvey(user);
     }
-  } else {
+  } catch {
     localStorage.removeItem(sessionKey);
     showAuth();
   }
@@ -1592,21 +2153,19 @@ function setMode(mode) {
   clearMessage();
 }
 
-function logIn(email, password) {
-  const normalizedEmail = email.trim().toLowerCase();
-  const user = getUsers().find(
-    (candidate) => candidate.email.toLowerCase() === normalizedEmail && candidate.password === password,
-  );
-
-  if (!user) {
-    showMessage("No mock account matches those credentials.");
-    return;
+async function logIn(email, password) {
+  try {
+    const { user } = await apiRequest("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    await startSession(user);
+  } catch (error) {
+    showMessage(error.message || "No account matches those credentials.");
   }
-
-  startSession(user);
 }
 
-function signUp(formData) {
+async function signUp(formData) {
   const name = formData.get("name").trim();
   const email = formData.get("email").trim().toLowerCase();
   const password = formData.get("password");
@@ -1621,28 +2180,15 @@ function signUp(formData) {
     return;
   }
 
-  const users = getUsers();
-  const accountExists = users.some((user) => user.email.toLowerCase() === email);
-
-  if (accountExists) {
-    showMessage("That mock account already exists.");
-    return;
+  try {
+    const { user } = await apiRequest("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({ name, email, password }),
+    });
+    await startSession(user);
+  } catch (error) {
+    showMessage(error.message || "Could not create that account.");
   }
-
-  const user = {
-    id: `local-${Date.now()}`,
-    name,
-    email,
-    password,
-    xp: 0,
-    surveyCompleted: false,
-    interests: [],
-    debateBio: "",
-  };
-
-  users.push(user);
-  saveUsers(users);
-  startSession(user);
 }
 
 function createLocalProfile(selectedTopics, debateBio) {
@@ -1711,6 +2257,93 @@ switchButton.addEventListener("click", () => {
   setMode(currentMode === "login" ? "signup" : "login");
 });
 
+function signOut() {
+  localStorage.removeItem(sessionKey);
+  form.reset();
+  setMode("login");
+  profileMenu.hidden = true;
+  showAuth();
+}
+
+headerProfileButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+
+  if (!activeUser) {
+    return;
+  }
+
+  updateHeaderProfile(activeUser);
+  notificationPanel.hidden = true;
+  profileMenu.hidden = !profileMenu.hidden;
+});
+
+profileMenu.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+
+profileMenuEdit.addEventListener("click", () => {
+  showProfilePage();
+});
+
+profileMenuLogout.addEventListener("click", signOut);
+
+profileHomeButton.addEventListener("click", () => {
+  if (activeUser) {
+    showApp(activeUser);
+  }
+});
+
+cancelProfileEditButton.addEventListener("click", () => {
+  profileEditMessage.textContent = "";
+  if (activeUser) {
+    showApp(activeUser);
+  }
+});
+
+profileEditForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  if (!activeUser) {
+    return;
+  }
+
+  const formData = new FormData(profileEditForm);
+  const interests = String(formData.get("interests") || "")
+    .split(",")
+    .map((topic) => topic.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  const debateBio = String(formData.get("debateBio") || "").trim();
+  const debateStyle = String(formData.get("debateStyle") || "Exploratory");
+  const existingProfile = activeUser.debateProfile || {};
+
+  try {
+    const { user } = await apiRequest(`/api/users/${encodeURIComponent(activeUser.id)}/profile`, {
+      method: "PUT",
+      body: JSON.stringify({
+        name: String(formData.get("name") || "").trim(),
+        country: String(formData.get("country") || "").trim(),
+        interests,
+        debateBio,
+        debateProfile: {
+          ...existingProfile,
+          source: existingProfile.source || "manual",
+          topics: interests,
+          debateStyle,
+          summary: debateBio || existingProfile.summary || "Open to clear, civil debate.",
+        },
+      }),
+    });
+
+    activeUser = user;
+    updateHeaderProfile(user);
+    renderProfile(user);
+    profileEditMessage.textContent = "Profile saved.";
+  } catch (error) {
+    profileEditMessage.textContent = error.message || "Could not save profile.";
+  }
+});
+
 topicSearch.addEventListener("input", () => {
   searchTopics(topicSearch.value);
 });
@@ -1725,18 +2358,18 @@ document.addEventListener("click", (event) => {
   }
 });
 
-form.addEventListener("submit", (event) => {
+form.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearMessage();
 
   const formData = new FormData(form);
 
   if (currentMode === "login") {
-    logIn(formData.get("email"), formData.get("password"));
+    await logIn(formData.get("email"), formData.get("password"));
     return;
   }
 
-  signUp(formData);
+  await signUp(formData);
 });
 
 testAccountButtons.forEach((button) => {
@@ -1746,13 +2379,6 @@ testAccountButtons.forEach((button) => {
     passwordInput.value = button.dataset.password;
     logIn(button.dataset.login, button.dataset.password);
   });
-});
-
-signOutButton.addEventListener("click", () => {
-  localStorage.removeItem(sessionKey);
-  form.reset();
-  setMode("login");
-  showAuth();
 });
 
 backHomeButton.addEventListener("click", () => {
@@ -1776,78 +2402,57 @@ stanceCards.forEach((card) => {
   });
 });
 
-findOpponentButton.addEventListener("click", () => {
+findOpponentButton.addEventListener("click", async () => {
   if (!activeTopic || !selectedStance) {
     return;
   }
-
-  const queue = getMatchQueue();
-  const existingMatch = queue.find(
-    (request) =>
-      request.topicId === activeTopic.id && request.userId !== activeUser.id && request.stance !== selectedStance,
-  );
-  const now = Date.now();
-
-  if (existingMatch) {
-    const currentRequest = {
-      id: `pending-${now}`,
-      userId: activeUser.id,
-      topicId: activeTopic.id,
-      topicTitle: activeTopic.title,
-      stance: selectedStance,
-      requestedAt: now,
-    };
-
-    saveMatchQueue(queue.filter((request) => request.id !== existingMatch.id));
-    createProposalFromMatch(currentRequest, existingMatch);
-    pendingMatch = null;
-    notificationBadge.hidden = false;
-    findOpponentButton.disabled = true;
-    findOpponentButton.textContent = "Potential match";
-    matchmakingStatus.textContent = `Potential match with ${getUserName(existingMatch.userId)}. Open the mail icon to review and accept.`;
-    return;
-  }
-
-  pendingMatch = {
-    id: `pending-${now}`,
-    userId: activeUser.id,
-    topic: activeTopic,
-    topicId: activeTopic.id,
-    topicTitle: activeTopic.title,
-    stance: selectedStance,
-    opponent: null,
-    requestedAt: now,
-  };
-
-  saveMatchQueue([
-    ...queue.filter((request) => request.userId !== activeUser.id || request.topicId !== activeTopic.id),
-    {
-      id: pendingMatch.id,
-      userId: activeUser.id,
-      topicId: activeTopic.id,
-      topicTitle: activeTopic.title,
-      stance: selectedStance,
-      requestedAt: pendingMatch.requestedAt,
-    },
-  ]);
-
-  upsertLocalDebate({
-    id: pendingMatch.id,
-    status: "pending",
-    topicTitle: activeTopic.title,
-    detail: "Finding an opponent. Match request remains open.",
-    updatedAt: pendingMatch.requestedAt,
-  });
 
   findOpponentButton.disabled = true;
   findOpponentButton.textContent = "Finding opponent...";
   matchmakingStatus.textContent =
     "Finding an opponent. This may take time, so we will notify you in the mail icon when someone matches.";
-  renderNotificationCenter();
+
+  try {
+    const result = await apiRequest("/api/match-requests", {
+      method: "POST",
+      body: JSON.stringify({
+        userId: activeUser.id,
+        topicId: activeTopic.id,
+        topicTitle: activeTopic.title,
+        stance: selectedStance,
+      }),
+    });
+
+    await refreshUserState(false);
+
+    if (result.status === "proposal") {
+      pendingMatch = null;
+      userProposals = [
+        result.proposal,
+        ...userProposals.filter((proposal) => proposal.id !== result.proposal.id),
+      ];
+      setUnread(activeUser.id, result.proposal.id);
+      findOpponentButton.textContent = "Potential match";
+      matchmakingStatus.textContent = "Potential match found. You still need to accept it in the mail inbox.";
+      notificationBadge.hidden = false;
+      renderNotificationCenter();
+      notificationPanel.hidden = false;
+      return;
+    }
+
+    pendingMatch = result.request;
+    findOpponentButton.textContent = "Finding opponent...";
+  } catch (error) {
+    findOpponentButton.disabled = false;
+    findOpponentButton.textContent = "Find opponent";
+    matchmakingStatus.textContent = error.message || "Could not start matchmaking.";
+  }
 });
 
-mailButton.addEventListener("click", () => {
+mailButton.addEventListener("click", async () => {
   const wasHidden = notificationPanel.hidden;
+  await refreshUserState(true);
+  profileMenu.hidden = true;
   clearUnread();
   renderNotificationCenter();
   notificationBadge.hidden = true;
@@ -1859,16 +2464,18 @@ notificationPanel.addEventListener("click", (event) => {
   event.stopPropagation();
 });
 
-myDebatesButton.addEventListener("click", () => {
+myDebatesButton.addEventListener("click", async () => {
   mountNotificationCenter(appHeaderActions);
   activeHeaderPanel = "debates";
   debateFilters.clear();
+  await refreshUserState(false);
+  profileMenu.hidden = true;
   notificationPanel.querySelector(".notification-head strong").textContent = "My debates";
   renderMyDebates();
   notificationPanel.hidden = false;
 });
 
-chatForm.addEventListener("submit", (event) => {
+chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   const message = chatInput.value.trim();
@@ -1877,10 +2484,9 @@ chatForm.addEventListener("submit", (event) => {
     return;
   }
 
-  addChatMessage("me", message);
+  await addChatMessage("me", message);
   chatInput.value = "";
-  turnStatus.textContent = "Opponent thinking...";
-  addMockOpponentReply();
+  turnStatus.textContent = "Waiting for opponent";
 });
 
 chatInput.addEventListener("keydown", (event) => {
@@ -1917,6 +2523,7 @@ copilotTabs.forEach((tab) => {
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".header-actions")) {
     notificationPanel.hidden = true;
+    profileMenu.hidden = true;
     activeHeaderPanel = "";
   }
 });
@@ -1938,50 +2545,43 @@ surveyForm.addEventListener("submit", async (event) => {
   surveySubmitButton.textContent = "Generating profile...";
 
   const debateProfile = await createDebateProfile(interests, debateBio);
-  const users = getUsers();
-  const userIndex = users.findIndex((user) => user.id === activeUser.id);
-
   surveySubmitButton.disabled = false;
   surveySubmitButton.textContent = originalSubmitText;
 
-  if (userIndex === -1) {
+  try {
+    const { user } = await apiRequest(`/api/users/${encodeURIComponent(activeUser.id)}/profile`, {
+      method: "PUT",
+      body: JSON.stringify({ interests, debateBio, debateProfile }),
+    });
+
+    surveyForm.reset();
+    await showApp(user);
+  } catch {
     localStorage.removeItem(sessionKey);
     showAuth();
-    return;
   }
-
-  users[userIndex] = {
-    ...users[userIndex],
-    interests,
-    debateBio,
-    debateProfile,
-    surveyCompleted: true,
-  };
-
-  saveUsers(users);
-  surveyForm.reset();
-  showApp(users[userIndex]);
 });
 
-skipSurveyButton.addEventListener("click", () => {
+skipSurveyButton.addEventListener("click", async () => {
   if (!activeUser) {
     showAuth();
     return;
   }
 
-  const users = getUsers();
-  const userIndex = users.findIndex((user) => user.id === activeUser.id);
-
-  if (userIndex !== -1) {
-    users[userIndex] = {
-      ...users[userIndex],
-      surveyCompleted: true,
-    };
-    saveUsers(users);
-    showApp(users[userIndex]);
+  try {
+    const { user } = await apiRequest(`/api/users/${encodeURIComponent(activeUser.id)}/profile`, {
+      method: "PUT",
+      body: JSON.stringify({
+        interests: activeUser.interests || [],
+        debateBio: activeUser.debateBio || "",
+        debateProfile: activeUser.debateProfile || null,
+      }),
+    });
+    await showApp(user);
+  } catch {
+    showAuth();
   }
 });
 
 cleanupFakeOpponentDebates();
-getUsers();
 restoreSession();

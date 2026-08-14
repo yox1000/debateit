@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const database = require("./database");
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, ".env");
@@ -74,6 +75,10 @@ function readBody(request) {
 function sendJson(response, status, payload) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(payload));
+}
+
+function sendError(response, error) {
+  sendJson(response, error.statusCode || 500, { error: error.message || "Server error" });
 }
 
 function createMockProfile({ selectedTopics = [], debateBio = "" }) {
@@ -321,7 +326,463 @@ function serveStatic(request, response) {
   });
 }
 
+const websocketClients = new Set();
+const websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+function createWebSocketAccept(key) {
+  return crypto.createHash("sha1").update(`${key}${websocketGuid}`).digest("base64");
+}
+
+function createWebSocketFrame(payload, opcode = 0x1) {
+  const body = Buffer.from(payload);
+  const length = body.length;
+  let header;
+
+  if (length < 126) {
+    header = Buffer.from([0x80 | opcode, length]);
+  } else if (length < 65536) {
+    header = Buffer.alloc(4);
+    header[0] = 0x80 | opcode;
+    header[1] = 126;
+    header.writeUInt16BE(length, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x80 | opcode;
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(length), 2);
+  }
+
+  return Buffer.concat([header, body]);
+}
+
+function sendWebSocketJson(client, payload) {
+  if (client.socket.destroyed) {
+    return;
+  }
+
+  try {
+    client.socket.write(createWebSocketFrame(JSON.stringify(payload)));
+  } catch {
+    websocketClients.delete(client);
+  }
+}
+
+function sendWebSocketControl(client, opcode, payload = "") {
+  if (!client.socket.destroyed) {
+    client.socket.write(createWebSocketFrame(payload, opcode));
+  }
+}
+
+function broadcastToUsers(userIds, payload) {
+  const recipients = new Set(userIds.filter(Boolean));
+
+  websocketClients.forEach((client) => {
+    if (recipients.has(client.userId)) {
+      sendWebSocketJson(client, payload);
+    }
+  });
+}
+
+function broadcastDebate(debateId, payload) {
+  broadcastToUsers(database.listDebateParticipantIds(debateId), payload);
+}
+
+function parseWebSocketFrames(buffer) {
+  const frames = [];
+  let offset = 0;
+
+  while (offset + 2 <= buffer.length) {
+    const firstByte = buffer[offset];
+    const secondByte = buffer[offset + 1];
+    const opcode = firstByte & 0x0f;
+    const masked = Boolean(secondByte & 0x80);
+    let length = secondByte & 0x7f;
+    let headerLength = 2;
+
+    if (length === 126) {
+      if (offset + 4 > buffer.length) {
+        break;
+      }
+
+      length = buffer.readUInt16BE(offset + 2);
+      headerLength = 4;
+    } else if (length === 127) {
+      if (offset + 10 > buffer.length) {
+        break;
+      }
+
+      const longLength = buffer.readBigUInt64BE(offset + 2);
+
+      if (longLength > BigInt(Number.MAX_SAFE_INTEGER)) {
+        return { frames, remaining: Buffer.alloc(0), tooLarge: true };
+      }
+
+      length = Number(longLength);
+      headerLength = 10;
+    }
+
+    const maskLength = masked ? 4 : 0;
+    const frameLength = headerLength + maskLength + length;
+
+    if (offset + frameLength > buffer.length) {
+      break;
+    }
+
+    const payloadStart = offset + headerLength + maskLength;
+    const payload = Buffer.from(buffer.subarray(payloadStart, payloadStart + length));
+
+    if (masked) {
+      const mask = buffer.subarray(offset + headerLength, offset + headerLength + 4);
+
+      for (let index = 0; index < payload.length; index += 1) {
+        payload[index] ^= mask[index % 4];
+      }
+    }
+
+    frames.push({ opcode, payload });
+    offset += frameLength;
+  }
+
+  return { frames, remaining: buffer.subarray(offset) };
+}
+
+function handleWebSocketMessage(client, rawMessage) {
+  let message;
+
+  try {
+    message = JSON.parse(rawMessage);
+  } catch {
+    sendWebSocketJson(client, { type: "error", message: "Invalid WebSocket JSON." });
+    return;
+  }
+
+  if (message.type === "subscribe") {
+    const user = database.getUserById(message.userId);
+
+    if (!user) {
+      sendWebSocketJson(client, { type: "error", message: "Unknown user." });
+      return;
+    }
+
+    client.userId = user.id;
+    sendWebSocketJson(client, { type: "connected", userId: user.id });
+    return;
+  }
+
+  if (message.type === "ping") {
+    sendWebSocketJson(client, { type: "pong", at: new Date().toISOString() });
+  }
+}
+
+function handleWebSocketUpgrade(request, socket) {
+  const requestUrl = new URL(request.url, `http://${request.headers.host}`);
+
+  if (requestUrl.pathname !== "/ws") {
+    socket.destroy();
+    return;
+  }
+
+  const key = request.headers["sec-websocket-key"];
+
+  if (!key) {
+    socket.destroy();
+    return;
+  }
+
+  socket.write(
+    [
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${createWebSocketAccept(key)}`,
+      "",
+      "",
+    ].join("\r\n"),
+  );
+
+  const client = {
+    socket,
+    userId: "",
+    buffer: Buffer.alloc(0),
+  };
+
+  websocketClients.add(client);
+
+  socket.on("data", (chunk) => {
+    client.buffer = Buffer.concat([client.buffer, chunk]);
+    const { frames, remaining, tooLarge } = parseWebSocketFrames(client.buffer);
+    client.buffer = remaining;
+
+    if (tooLarge) {
+      sendWebSocketControl(client, 0x8);
+      socket.destroy();
+      return;
+    }
+
+    frames.forEach((frame) => {
+      if (frame.opcode === 0x1) {
+        handleWebSocketMessage(client, frame.payload.toString("utf8"));
+      } else if (frame.opcode === 0x8) {
+        sendWebSocketControl(client, 0x8);
+        socket.end();
+      } else if (frame.opcode === 0x9) {
+        sendWebSocketControl(client, 0xA, frame.payload);
+      }
+    });
+  });
+
+  socket.on("close", () => websocketClients.delete(client));
+  socket.on("end", () => websocketClients.delete(client));
+  socket.on("error", () => websocketClients.delete(client));
+}
+
 const server = http.createServer(async (request, response) => {
+  const requestUrl = new URL(request.url, `http://${request.headers.host}`);
+
+  if (request.method === "GET" && requestUrl.pathname === "/api/db/status") {
+    sendJson(response, 200, database.getStatus());
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/api/db/clear-runtime") {
+    sendJson(response, 200, database.clearDebateRuntimeData());
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/api/auth/login") {
+    try {
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const user = database.getUserByCredentials(payload.email, payload.password);
+
+      if (!user) {
+        sendJson(response, 401, { error: "Invalid email or password." });
+        return;
+      }
+
+      sendJson(response, 200, { user });
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/api/auth/signup") {
+    try {
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const user = database.createUser(payload);
+      sendJson(response, 201, { user });
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  const userMatch = requestUrl.pathname.match(/^\/api\/users\/([^/]+)$/);
+
+  if (request.method === "GET" && userMatch) {
+    const user = database.getUserById(userMatch[1]);
+
+    if (!user) {
+      sendJson(response, 404, { error: "User not found." });
+      return;
+    }
+
+    sendJson(response, 200, { user });
+    return;
+  }
+
+  const profileMatch = requestUrl.pathname.match(/^\/api\/users\/([^/]+)\/profile$/);
+
+  if (request.method === "PUT" && profileMatch) {
+    try {
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const user = database.updateUserProfile(profileMatch[1], payload);
+      sendJson(response, 200, { user });
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  const debatesMatch = requestUrl.pathname.match(/^\/api\/users\/([^/]+)\/debates$/);
+
+  if (request.method === "GET" && debatesMatch) {
+    sendJson(response, 200, { debates: database.listDebatesForUser(debatesMatch[1]) });
+    return;
+  }
+
+  const proposalsMatch = requestUrl.pathname.match(/^\/api\/users\/([^/]+)\/proposals$/);
+
+  if (request.method === "GET" && proposalsMatch) {
+    sendJson(response, 200, { proposals: database.listProposalsForUser(proposalsMatch[1]) });
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/api/match-requests") {
+    try {
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const result = database.createMatchRequest({
+        userId: payload.userId,
+        topicId: payload.topicId,
+        topicTitle: payload.topicTitle,
+        stance: payload.stance,
+      });
+      sendJson(response, 201, result);
+
+      if (result.status === "proposal") {
+        broadcastToUsers(
+          result.proposal.users.map((user) => user.userId),
+          {
+            type: "proposal_found",
+            proposal: result.proposal,
+          },
+        );
+      } else {
+        broadcastToUsers([payload.userId], {
+          type: "match_request_started",
+          request: result.request,
+        });
+      }
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  const matchRequestCancel = requestUrl.pathname.match(/^\/api\/match-requests\/([^/]+)\/cancel$/);
+
+  if (request.method === "POST" && matchRequestCancel) {
+    try {
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      database.cancelMatchRequest(matchRequestCancel[1], payload.userId);
+      sendJson(response, 200, { ok: true });
+      broadcastToUsers([payload.userId], {
+        type: "match_request_cancelled",
+        requestId: matchRequestCancel[1],
+      });
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  const proposalAccept = requestUrl.pathname.match(/^\/api\/proposals\/([^/]+)\/accept$/);
+
+  if (request.method === "POST" && proposalAccept) {
+    try {
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const result = database.acceptProposal(proposalAccept[1], payload.userId);
+      sendJson(response, 200, result);
+      broadcastToUsers(
+        result.proposal.users.map((user) => user.userId),
+        {
+          type: result.debateId ? "debate_started" : "proposal_updated",
+          proposal: result.proposal,
+          debateId: result.debateId,
+        },
+      );
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  const proposalReject = requestUrl.pathname.match(/^\/api\/proposals\/([^/]+)\/reject$/);
+
+  if (request.method === "POST" && proposalReject) {
+    try {
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const proposal = database.rejectProposal(proposalReject[1], payload.userId);
+      sendJson(response, 200, { ok: true });
+
+      if (proposal) {
+        broadcastToUsers(
+          proposal.users.map((user) => user.userId),
+          {
+            type: "proposal_rejected",
+            proposalId: proposal.id,
+          },
+        );
+      }
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  const messagesMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/messages$/);
+
+  if (messagesMatch) {
+    if (request.method === "GET") {
+      sendJson(response, 200, { messages: database.listMessages(messagesMatch[1]) });
+      return;
+    }
+
+    if (request.method === "POST") {
+      try {
+        const body = await readBody(request);
+        const payload = JSON.parse(body || "{}");
+        const message = database.createMessage({
+          debateId: messagesMatch[1],
+          userId: payload.userId,
+          speaker: payload.speaker,
+          text: payload.text,
+        });
+        sendJson(response, 201, { message });
+        broadcastDebate(messagesMatch[1], {
+          type: "chat_message",
+          debateId: messagesMatch[1],
+          message,
+        });
+      } catch (error) {
+        sendError(response, error);
+      }
+      return;
+    }
+  }
+
+  const annotationsMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/annotations$/);
+
+  if (annotationsMatch) {
+    if (request.method === "GET") {
+      sendJson(response, 200, { annotations: database.listAnnotations(annotationsMatch[1]) });
+      return;
+    }
+
+    if (request.method === "POST") {
+      try {
+        const body = await readBody(request);
+        const payload = JSON.parse(body || "{}");
+        const annotation = database.createAnnotation({
+          debateId: annotationsMatch[1],
+          messageId: payload.messageId,
+          userId: payload.userId,
+          speaker: payload.speaker,
+          start: payload.start,
+          end: payload.end,
+          quote: payload.quote,
+          note: payload.note,
+        });
+        sendJson(response, 201, { annotation });
+        broadcastDebate(annotationsMatch[1], {
+          type: "annotation_created",
+          debateId: annotationsMatch[1],
+          annotation,
+        });
+      } catch (error) {
+        sendError(response, error);
+      }
+      return;
+    }
+  }
+
   if (request.method === "POST" && request.url === "/api/profile") {
     try {
       const body = await readBody(request);
@@ -365,6 +826,8 @@ const server = http.createServer(async (request, response) => {
   response.writeHead(405);
   response.end("Method not allowed");
 });
+
+server.on("upgrade", handleWebSocketUpgrade);
 
 server.listen(port, host, () => {
   console.log(`Debate.it running at http://${host}:${port}`);

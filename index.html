@@ -108,10 +108,8 @@
               <path d="M6 2.75h8.4L19 7.35v13.9H6V2.75Zm2 2v14.5h9V8.4h-3.65V4.75H8Zm7.1 1.4v.5H16l-.9-.5ZM9.25 11h5.5v1.5h-5.5V11Zm0 3.25h5.5v1.5h-5.5v-1.5Zm0-6.5h3v1.5h-3v-1.5Z" />
             </svg>
           </button>
-          <button class="icon-button exit-button" type="button" id="sign-out" aria-label="Sign out">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M5 3.75h8.25v2H7v12.5h6.25v2H5V3.75Zm9.6 4.2 1.4-1.4L21.45 12 16 17.45l-1.4-1.4 3.05-3.05H10.5v-2h7.15L14.6 7.95Z" />
-            </svg>
+          <button class="profile-button" type="button" id="header-profile" aria-label="Open profile">
+            <span id="header-profile-initial">D</span>
           </button>
         </div>
       </header>
@@ -149,12 +147,16 @@
               <p class="eyebrow">Your debate profile</p>
               <h2 id="profile-style">Profile pending</h2>
             </div>
-            <span class="source-badge" id="profile-source">Local</span>
+            <div class="profile-actions">
+              <span class="source-badge" id="profile-source">Local</span>
+            </div>
           </div>
 
           <p class="profile-summary" id="profile-summary">
             Complete the first-login survey to generate debate recommendations.
           </p>
+
+          <div class="profile-stat-row" id="profile-stats"></div>
 
           <div class="profile-columns">
             <div>
@@ -205,6 +207,72 @@
         </div>
 
         <button class="primary-button home-cta" type="button">Enter 1v1 Arena</button>
+      </section>
+    </main>
+
+    <main class="profile-shell" id="profile-view" hidden>
+      <header class="app-header">
+        <a class="brand-mark app-brand" href="/" aria-label="Debate.it home">
+          <span class="brand-emblem" aria-hidden="true">
+            <svg class="gavel-icon" viewBox="0 0 32 32" focusable="false">
+              <path d="M13.3 4.7 18 9.4l-2.2 2.2 2.8 2.8 2.2-2.2 4.7 4.7-5.2 5.2-4.7-4.7 2.1-2.1-2.8-2.8-2.1 2.1-4.7-4.7 5.2-5.2Z" />
+              <path d="m5.7 24.2 8.1-8.1 2.1 2.1-8.1 8.1H5.7v-2.1Z" />
+              <path d="M13.3 24.7h13.5v2.8H13.3z" />
+            </svg>
+          </span>
+          <span>Debate.it</span>
+        </a>
+        <div class="header-actions" id="profile-header-actions">
+          <button class="icon-button home-button" type="button" id="profile-home" aria-label="Home">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M3.5 11.2 12 4l8.5 7.2-1.3 1.5-1.2-1v8.55H6V11.7l-1.2 1-1.3-1.5ZM8 9.95v8.3h3v-5h2v5h3v-8.3l-4-3.4-4 3.4Z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="profile-page-panel" aria-label="Edit profile">
+        <p class="eyebrow">Profile</p>
+        <h1>Edit your debate profile</h1>
+        <p class="profile-summary">This information appears in match previews before either side accepts.</p>
+
+        <form class="profile-edit-form" id="profile-edit-form">
+          <div class="profile-edit-grid">
+            <label class="field">
+              <span>Display name</span>
+              <input type="text" name="name" autocomplete="name" />
+            </label>
+            <label class="field">
+              <span>Country</span>
+              <select name="country" autocomplete="country-name">
+                <option value="">Select country</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">
+            <span>Debate style</span>
+            <select name="debateStyle">
+              <option value="Exploratory">Exploratory</option>
+              <option value="Principle-driven">Principle-driven</option>
+              <option value="Policy-focused">Policy-focused</option>
+              <option value="Evidence-first">Evidence-first</option>
+              <option value="Calm rebuttal">Calm rebuttal</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Strongest topics</span>
+            <input type="text" name="interests" placeholder="Technology, Politics, Ethics" />
+          </label>
+          <label class="field">
+            <span>Debate bio</span>
+            <textarea name="debateBio" rows="5" placeholder="What do you like debating and how do you usually argue?"></textarea>
+          </label>
+          <div class="profile-edit-actions">
+            <button class="primary-button compact-button" type="submit">Save profile</button>
+            <button class="secondary-button compact-button" type="button" id="cancel-profile-edit">Cancel</button>
+          </div>
+          <p class="form-message" id="profile-edit-message" role="status" aria-live="polite"></p>
+        </form>
       </section>
     </main>
 
@@ -345,6 +413,15 @@
           <p>No active debate invitations.</p>
         </div>
       </section>
+    </aside>
+
+    <aside class="profile-menu" id="profile-menu" hidden aria-label="Profile menu">
+      <div class="profile-menu-head">
+        <strong id="profile-menu-name">Debater</strong>
+        <span id="profile-menu-meta">Newcomer</span>
+      </div>
+      <button type="button" id="profile-menu-edit">Edit profile</button>
+      <button type="button" id="profile-menu-logout">Log out</button>
     </aside>
 
     <main class="survey-shell" id="survey-view" hidden>
