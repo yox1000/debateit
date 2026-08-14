@@ -44,6 +44,7 @@ const deepSeekApiKey = process.env.DEEPSEEK_API_KEY || "";
 const deepSeekModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
 const topicCatalog = JSON.parse(fs.readFileSync(path.join(__dirname, "data", "debate-topics.json"), "utf8"));
 const topicCatalogVersion = crypto.createHash("sha1").update(JSON.stringify(topicCatalog)).digest("hex").slice(0, 12);
+const sessionCookieName = "debateit_session";
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -72,13 +73,85 @@ function readBody(request) {
   });
 }
 
-function sendJson(response, status, payload) {
-  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+function sendJson(response, status, payload, headers = {}) {
+  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", ...headers });
   response.end(JSON.stringify(payload));
 }
 
 function sendError(response, error) {
   sendJson(response, error.statusCode || 500, { error: error.message || "Server error" });
+}
+
+function parseCookies(request) {
+  return Object.fromEntries(
+    String(request.headers.cookie || "")
+      .split(";")
+      .map((cookie) => cookie.trim())
+      .filter(Boolean)
+      .map((cookie) => {
+        const separator = cookie.indexOf("=");
+        const key = separator === -1 ? cookie : cookie.slice(0, separator);
+        const value = separator === -1 ? "" : cookie.slice(separator + 1);
+        return [decodeURIComponent(key), decodeURIComponent(value)];
+      }),
+  );
+}
+
+function getSessionId(request) {
+  return parseCookies(request)[sessionCookieName] || "";
+}
+
+function createSessionCookie(session) {
+  return `${sessionCookieName}=${encodeURIComponent(session.id)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.maxAgeSeconds}`;
+}
+
+function clearSessionCookie() {
+  return `${sessionCookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+}
+
+function getAuthenticatedUser(request) {
+  return database.getUserBySession(getSessionId(request));
+}
+
+function requireAuthenticatedUser(request, response) {
+  const user = getAuthenticatedUser(request);
+
+  if (!user) {
+    sendJson(response, 401, { error: "Authentication required." });
+    return null;
+  }
+
+  return user;
+}
+
+function requireSameUser(request, response, userId) {
+  const user = requireAuthenticatedUser(request, response);
+
+  if (!user) {
+    return null;
+  }
+
+  if (user.id !== userId) {
+    sendJson(response, 403, { error: "You can only access your own account." });
+    return null;
+  }
+
+  return user;
+}
+
+function requireDebateParticipant(request, response, debateId) {
+  const user = requireAuthenticatedUser(request, response);
+
+  if (!user) {
+    return null;
+  }
+
+  if (!database.isDebateParticipant(debateId, user.id)) {
+    sendJson(response, 403, { error: "You are not part of this debate." });
+    return null;
+  }
+
+  return user;
 }
 
 function createMockProfile({ selectedTopics = [], debateBio = "" }) {
@@ -383,8 +456,22 @@ function broadcastToUsers(userIds, payload) {
   });
 }
 
+function broadcastToUsersExcept(userIds, excludedUserId, payload) {
+  const recipients = new Set(userIds.filter((userId) => userId && userId !== excludedUserId));
+
+  websocketClients.forEach((client) => {
+    if (recipients.has(client.userId)) {
+      sendWebSocketJson(client, payload);
+    }
+  });
+}
+
 function broadcastDebate(debateId, payload) {
   broadcastToUsers(database.listDebateParticipantIds(debateId), payload);
+}
+
+function broadcastDebateExcept(debateId, excludedUserId, payload) {
+  broadcastToUsersExcept(database.listDebateParticipantIds(debateId), excludedUserId, payload);
 }
 
 function parseWebSocketFrames(buffer) {
@@ -457,15 +544,56 @@ function handleWebSocketMessage(client, rawMessage) {
   }
 
   if (message.type === "subscribe") {
-    const user = database.getUserById(message.userId);
-
-    if (!user) {
+    if (!client.userId) {
       sendWebSocketJson(client, { type: "error", message: "Unknown user." });
       return;
     }
 
-    client.userId = user.id;
-    sendWebSocketJson(client, { type: "connected", userId: user.id });
+    sendWebSocketJson(client, { type: "connected", userId: client.userId });
+    return;
+  }
+
+  if (message.type === "join_room") {
+    if (!database.isDebateParticipant(message.debateId, client.userId)) {
+      sendWebSocketJson(client, { type: "error", message: "Cannot join that debate room." });
+      return;
+    }
+
+    client.rooms.add(message.debateId);
+    broadcastDebateExcept(message.debateId, client.userId, {
+      type: "room_presence",
+      debateId: message.debateId,
+      userId: client.userId,
+      name: client.name,
+      status: "joined",
+    });
+    return;
+  }
+
+  if (message.type === "leave_room") {
+    client.rooms.delete(message.debateId);
+    broadcastDebateExcept(message.debateId, client.userId, {
+      type: "room_presence",
+      debateId: message.debateId,
+      userId: client.userId,
+      name: client.name,
+      status: "left",
+    });
+    return;
+  }
+
+  if (message.type === "typing") {
+    if (!client.rooms.has(message.debateId)) {
+      return;
+    }
+
+    broadcastDebateExcept(message.debateId, client.userId, {
+      type: "typing",
+      debateId: message.debateId,
+      userId: client.userId,
+      name: client.name,
+      isTyping: Boolean(message.isTyping),
+    });
     return;
   }
 
@@ -489,6 +617,14 @@ function handleWebSocketUpgrade(request, socket) {
     return;
   }
 
+  const user = getAuthenticatedUser(request);
+
+  if (!user) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
   socket.write(
     [
       "HTTP/1.1 101 Switching Protocols",
@@ -502,7 +638,9 @@ function handleWebSocketUpgrade(request, socket) {
 
   const client = {
     socket,
-    userId: "",
+    userId: user.id,
+    name: user.name,
+    rooms: new Set(),
     buffer: Buffer.alloc(0),
   };
 
@@ -531,9 +669,23 @@ function handleWebSocketUpgrade(request, socket) {
     });
   });
 
-  socket.on("close", () => websocketClients.delete(client));
-  socket.on("end", () => websocketClients.delete(client));
-  socket.on("error", () => websocketClients.delete(client));
+  const removeClient = () => {
+    websocketClients.delete(client);
+    client.rooms.forEach((debateId) => {
+      broadcastDebateExcept(debateId, client.userId, {
+        type: "room_presence",
+        debateId,
+        userId: client.userId,
+        name: client.name,
+        status: "left",
+      });
+    });
+    client.rooms.clear();
+  };
+
+  socket.on("close", removeClient);
+  socket.on("end", removeClient);
+  socket.on("error", removeClient);
 }
 
 const server = http.createServer(async (request, response) => {
@@ -560,9 +712,25 @@ const server = http.createServer(async (request, response) => {
         return;
       }
 
-      sendJson(response, 200, { user });
+      const session = database.createSession(user.id);
+      sendJson(response, 200, { user }, { "Set-Cookie": createSessionCookie(session) });
     } catch (error) {
       sendError(response, error);
+    }
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/api/auth/logout") {
+    database.deleteSession(getSessionId(request));
+    sendJson(response, 200, { ok: true }, { "Set-Cookie": clearSessionCookie() });
+    return;
+  }
+
+  if (request.method === "GET" && requestUrl.pathname === "/api/auth/session") {
+    const user = requireAuthenticatedUser(request, response);
+
+    if (user) {
+      sendJson(response, 200, { user });
     }
     return;
   }
@@ -572,7 +740,8 @@ const server = http.createServer(async (request, response) => {
       const body = await readBody(request);
       const payload = JSON.parse(body || "{}");
       const user = database.createUser(payload);
-      sendJson(response, 201, { user });
+      const session = database.createSession(user.id);
+      sendJson(response, 201, { user }, { "Set-Cookie": createSessionCookie(session) });
     } catch (error) {
       sendError(response, error);
     }
@@ -582,10 +751,9 @@ const server = http.createServer(async (request, response) => {
   const userMatch = requestUrl.pathname.match(/^\/api\/users\/([^/]+)$/);
 
   if (request.method === "GET" && userMatch) {
-    const user = database.getUserById(userMatch[1]);
+    const user = requireSameUser(request, response, userMatch[1]);
 
     if (!user) {
-      sendJson(response, 404, { error: "User not found." });
       return;
     }
 
@@ -597,6 +765,12 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "PUT" && profileMatch) {
     try {
+      const currentUser = requireSameUser(request, response, profileMatch[1]);
+
+      if (!currentUser) {
+        return;
+      }
+
       const body = await readBody(request);
       const payload = JSON.parse(body || "{}");
       const user = database.updateUserProfile(profileMatch[1], payload);
@@ -610,26 +784,45 @@ const server = http.createServer(async (request, response) => {
   const debatesMatch = requestUrl.pathname.match(/^\/api\/users\/([^/]+)\/debates$/);
 
   if (request.method === "GET" && debatesMatch) {
-    sendJson(response, 200, { debates: database.listDebatesForUser(debatesMatch[1]) });
+    const user = requireSameUser(request, response, debatesMatch[1]);
+
+    if (user) {
+      sendJson(response, 200, { debates: database.listDebatesForUser(user.id) });
+    }
     return;
   }
 
   const proposalsMatch = requestUrl.pathname.match(/^\/api\/users\/([^/]+)\/proposals$/);
 
   if (request.method === "GET" && proposalsMatch) {
-    sendJson(response, 200, { proposals: database.listProposalsForUser(proposalsMatch[1]) });
+    const user = requireSameUser(request, response, proposalsMatch[1]);
+
+    if (user) {
+      sendJson(response, 200, { proposals: database.listProposalsForUser(user.id) });
+    }
     return;
   }
 
   if (request.method === "POST" && requestUrl.pathname === "/api/match-requests") {
     try {
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
       const body = await readBody(request);
       const payload = JSON.parse(body || "{}");
       const result = database.createMatchRequest({
-        userId: payload.userId,
+        userId: user.id,
         topicId: payload.topicId,
         topicTitle: payload.topicTitle,
         stance: payload.stance,
+        metadata: {
+          topicCategory: payload.topicCategory || "",
+          topicTags: payload.topicTags || [],
+          timezone: payload.timezone || "",
+        },
       });
       sendJson(response, 201, result);
 
@@ -642,7 +835,7 @@ const server = http.createServer(async (request, response) => {
           },
         );
       } else {
-        broadcastToUsers([payload.userId], {
+        broadcastToUsers([user.id], {
           type: "match_request_started",
           request: result.request,
         });
@@ -657,11 +850,15 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "POST" && matchRequestCancel) {
     try {
-      const body = await readBody(request);
-      const payload = JSON.parse(body || "{}");
-      database.cancelMatchRequest(matchRequestCancel[1], payload.userId);
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      database.cancelMatchRequest(matchRequestCancel[1], user.id);
       sendJson(response, 200, { ok: true });
-      broadcastToUsers([payload.userId], {
+      broadcastToUsers([user.id], {
         type: "match_request_cancelled",
         requestId: matchRequestCancel[1],
       });
@@ -675,9 +872,13 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "POST" && proposalAccept) {
     try {
-      const body = await readBody(request);
-      const payload = JSON.parse(body || "{}");
-      const result = database.acceptProposal(proposalAccept[1], payload.userId);
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const result = database.acceptProposal(proposalAccept[1], user.id);
       sendJson(response, 200, result);
       broadcastToUsers(
         result.proposal.users.map((user) => user.userId),
@@ -697,9 +898,13 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "POST" && proposalReject) {
     try {
-      const body = await readBody(request);
-      const payload = JSON.parse(body || "{}");
-      const proposal = database.rejectProposal(proposalReject[1], payload.userId);
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const proposal = database.rejectProposal(proposalReject[1], user.id);
       sendJson(response, 200, { ok: true });
 
       if (proposal) {
@@ -721,18 +926,28 @@ const server = http.createServer(async (request, response) => {
 
   if (messagesMatch) {
     if (request.method === "GET") {
-      sendJson(response, 200, { messages: database.listMessages(messagesMatch[1]) });
+      const user = requireDebateParticipant(request, response, messagesMatch[1]);
+
+      if (user) {
+        sendJson(response, 200, { messages: database.listMessages(messagesMatch[1]) });
+      }
       return;
     }
 
     if (request.method === "POST") {
       try {
+        const user = requireDebateParticipant(request, response, messagesMatch[1]);
+
+        if (!user) {
+          return;
+        }
+
         const body = await readBody(request);
         const payload = JSON.parse(body || "{}");
         const message = database.createMessage({
           debateId: messagesMatch[1],
-          userId: payload.userId,
-          speaker: payload.speaker,
+          userId: user.id,
+          speaker: "debater",
           text: payload.text,
         });
         sendJson(response, 201, { message });
@@ -752,18 +967,28 @@ const server = http.createServer(async (request, response) => {
 
   if (annotationsMatch) {
     if (request.method === "GET") {
-      sendJson(response, 200, { annotations: database.listAnnotations(annotationsMatch[1]) });
+      const user = requireDebateParticipant(request, response, annotationsMatch[1]);
+
+      if (user) {
+        sendJson(response, 200, { annotations: database.listAnnotations(annotationsMatch[1]) });
+      }
       return;
     }
 
     if (request.method === "POST") {
       try {
+        const user = requireDebateParticipant(request, response, annotationsMatch[1]);
+
+        if (!user) {
+          return;
+        }
+
         const body = await readBody(request);
         const payload = JSON.parse(body || "{}");
         const annotation = database.createAnnotation({
           debateId: annotationsMatch[1],
           messageId: payload.messageId,
-          userId: payload.userId,
+          userId: user.id,
           speaker: payload.speaker,
           start: payload.start,
           end: payload.end,
@@ -785,6 +1010,12 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "POST" && request.url === "/api/profile") {
     try {
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
       const body = await readBody(request);
       const payload = JSON.parse(body || "{}");
       const profile = await createDeepSeekProfile(payload);
@@ -805,6 +1036,12 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "POST" && request.url === "/api/matches") {
     try {
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
       const body = await readBody(request);
       const payload = JSON.parse(body || "{}");
       const result = await createDeepSeekMatches(payload);

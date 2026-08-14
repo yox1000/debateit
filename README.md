@@ -38,11 +38,12 @@ The database file and SQLite WAL/SHM files are ignored by git.
 - `alex@debate.it` / `test`
 - `sam@debate.it` / `test`
 
-Sign-up creates additional browser-local mock accounts with `localStorage`.
+Sign-up creates additional SQLite-backed test accounts.
 Each account sees a first-login interests survey before reaching the home screen.
 
-The SQLite database is seeded with the same three test accounts for the new
-server-side API layer.
+Passwords are stored as scrypt hashes. Login/signup create an HttpOnly session
+cookie, and protected API/WebSocket routes use that session instead of trusting
+browser-sent user ids.
 
 ## Matching engine
 
@@ -59,12 +60,31 @@ Initial SQLite-backed endpoints:
 - `GET /api/db/status`
 - `POST /api/auth/login`
 - `POST /api/auth/signup`
+- `POST /api/auth/logout`
+- `GET /api/auth/session`
 - `PUT /api/users/:userId/profile`
 - `GET /api/users/:userId/debates`
+- `GET /api/users/:userId/proposals`
+- `POST /api/match-requests`
+- `POST /api/match-requests/:requestId/cancel`
+- `POST /api/proposals/:proposalId/accept`
+- `POST /api/proposals/:proposalId/reject`
 - `GET /api/debates/:debateId/messages`
 - `POST /api/debates/:debateId/messages`
 - `GET /api/debates/:debateId/annotations`
 - `POST /api/debates/:debateId/annotations`
 
-The frontend now writes auth, survey profile, matchmaking, debates, messages, and annotations through the SQLite API.
-The browser still keeps a lightweight local session record and in-memory UI caches.
+The frontend now writes auth, survey profile, matchmaking, debates, messages,
+and annotations through the SQLite API. The browser keeps only a lightweight
+session marker and in-memory UI caches; the server-side HttpOnly cookie is the
+real auth state.
+
+## Realtime
+
+The server exposes a no-dependency WebSocket endpoint at `/ws`.
+
+- WebSocket upgrades authenticate from the same session cookie.
+- Match proposals, proposal accept/reject, debate activation, chat messages,
+  annotations, room presence, and typing indicators are pushed live.
+- The frontend keeps a slower 30-second polling fallback for recovery if a
+  socket disconnects.

@@ -50,6 +50,7 @@ const roomDetail = document.querySelector("#room-detail");
 const chatThread = document.querySelector("#chat-thread");
 const chatForm = document.querySelector("#chat-form");
 const chatInput = document.querySelector("#chat-input");
+const sendButton = chatForm.querySelector(".send-button");
 const micButton = document.querySelector("#mic-button");
 const turnStatus = document.querySelector("#turn-status");
 const copilotTabs = document.querySelectorAll(".copilot-tab");
@@ -157,10 +158,14 @@ let documentStatusTimeout = 0;
 let realtimeSocket = null;
 let realtimeReconnectTimeout = 0;
 let realtimeManuallyClosed = false;
+let typingTimeout = 0;
+let typingBroadcastTimeout = 0;
+let sendingChat = false;
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
     ...options,
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {}),
@@ -210,6 +215,20 @@ function appendById(items, item) {
   }
 
   return [...items, item];
+}
+
+function sendRealtime(payload) {
+  if (realtimeSocket?.readyState === WebSocket.OPEN) {
+    realtimeSocket.send(JSON.stringify(payload));
+  }
+}
+
+function updateRealtimeStatus(status) {
+  document.body.dataset.realtime = status;
+
+  if (activeRoomDebateId && status !== "connected") {
+    turnStatus.textContent = status === "connecting" ? "Reconnecting..." : "Realtime offline. Retrying...";
+  }
 }
 
 function refreshOpenRealtimeViews() {
@@ -289,6 +308,22 @@ async function handleRealtimeEvent(event) {
     return;
   }
 
+  if (event.type === "typing" && event.debateId === activeRoomDebateId && event.isTyping) {
+    window.clearTimeout(typingTimeout);
+    turnStatus.textContent = `${event.name || "Opponent"} is typing...`;
+    typingTimeout = window.setTimeout(() => {
+      turnStatus.textContent = "Your turn";
+    }, 1800);
+    return;
+  }
+
+  if (event.type === "room_presence" && event.debateId === activeRoomDebateId) {
+    turnStatus.textContent = event.status === "joined"
+      ? `${event.name || "Opponent"} joined`
+      : `${event.name || "Opponent"} left`;
+    return;
+  }
+
   if (event.type === "annotation_created") {
     const annotations = getAnnotations(event.debateId);
     saveAnnotations(event.debateId, upsertById(annotations, event.annotation));
@@ -314,11 +349,17 @@ function connectRealtime() {
 
   realtimeManuallyClosed = false;
   window.clearTimeout(realtimeReconnectTimeout);
+  updateRealtimeStatus("connecting");
 
   realtimeSocket = new WebSocket(getWebSocketUrl());
 
   realtimeSocket.addEventListener("open", () => {
-    realtimeSocket.send(JSON.stringify({ type: "subscribe", userId: activeUser.id }));
+    updateRealtimeStatus("connected");
+    sendRealtime({ type: "subscribe" });
+
+    if (activeRoomDebateId) {
+      sendRealtime({ type: "join_room", debateId: activeRoomDebateId });
+    }
   });
 
   realtimeSocket.addEventListener("message", (messageEvent) => {
@@ -331,6 +372,7 @@ function connectRealtime() {
 
   realtimeSocket.addEventListener("close", () => {
     realtimeSocket = null;
+    updateRealtimeStatus("offline");
 
     if (!realtimeManuallyClosed && activeUser) {
       realtimeReconnectTimeout = window.setTimeout(connectRealtime, 1500);
@@ -341,6 +383,7 @@ function connectRealtime() {
 function disconnectRealtime() {
   realtimeManuallyClosed = true;
   window.clearTimeout(realtimeReconnectTimeout);
+  updateRealtimeStatus("offline");
 
   if (realtimeSocket) {
     realtimeSocket.close();
@@ -1024,7 +1067,7 @@ function createProposalFromMatch(currentRequest, opponentRequest) {
 async function acceptProposal(proposalId) {
   const result = await apiRequest(`/api/proposals/${encodeURIComponent(proposalId)}/accept`, {
     method: "POST",
-    body: JSON.stringify({ userId: activeUser.id }),
+    body: JSON.stringify({}),
   });
   await refreshUserState(false);
   clearUnread();
@@ -1045,7 +1088,7 @@ async function acceptProposal(proposalId) {
 async function rejectProposal(proposalId) {
   await apiRequest(`/api/proposals/${encodeURIComponent(proposalId)}/reject`, {
     method: "POST",
-    body: JSON.stringify({ userId: activeUser.id }),
+    body: JSON.stringify({}),
   });
   await refreshUserState(false);
   clearUnread();
@@ -1136,7 +1179,7 @@ async function clearPendingMatch(updateStatus) {
   if (pendingMatch) {
     await apiRequest(`/api/match-requests/${encodeURIComponent(pendingMatch.id)}/cancel`, {
       method: "POST",
-      body: JSON.stringify({ userId: activeUser.id }),
+      body: JSON.stringify({}),
     });
     await refreshUserState(false);
   }
@@ -1368,6 +1411,7 @@ async function loadMatches(user) {
   try {
     const response = await fetch("/api/matches", {
       method: "POST",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         debateProfile: user.debateProfile || {},
@@ -1459,7 +1503,7 @@ function startStatePolling() {
     if (activeUser) {
       refreshUserState(true).catch(() => {});
     }
-  }, 5000);
+  }, 30000);
 }
 
 function stopStatePolling() {
@@ -1467,7 +1511,15 @@ function stopStatePolling() {
   statePollId = 0;
 }
 
+function leaveActiveRoom() {
+  if (activeRoomDebateId) {
+    sendRealtime({ type: "leave_room", debateId: activeRoomDebateId });
+    activeRoomDebateId = "";
+  }
+}
+
 async function showApp(user) {
+  leaveActiveRoom();
   activeUser = user;
   connectRealtime();
   mountNotificationCenter(appHeaderActions);
@@ -1491,6 +1543,7 @@ async function showApp(user) {
 
 function showAuth() {
   stopStatePolling();
+  leaveActiveRoom();
   disconnectRealtime();
   activeUser = null;
   userDebates = [];
@@ -1510,6 +1563,7 @@ function showAuth() {
 }
 
 function showSurvey(user) {
+  leaveActiveRoom();
   activeUser = user;
   setNotificationVisibility(false);
   authView.hidden = true;
@@ -1527,6 +1581,7 @@ function showProfilePage() {
     return;
   }
 
+  leaveActiveRoom();
   mountNotificationCenter(profileHeaderActions);
   mountProfileButton(profileHeaderActions);
   updateHeaderProfile();
@@ -1544,6 +1599,7 @@ function showProfilePage() {
 }
 
 function showDebateTopic(topic, prompt) {
+  leaveActiveRoom();
   activeTopic = topic;
   selectedStance = "";
   mountNotificationCenter(debateHeaderActions);
@@ -1587,6 +1643,7 @@ async function showDebateRoom(debateId) {
   roomTitle.textContent = debate.topicTitle;
   roomDetail.textContent = debate.detail;
   await loadRoomState(debateId);
+  sendRealtime({ type: "join_room", debateId });
   renderChatThread(debate);
   notificationPanel.hidden = true;
   authView.hidden = true;
@@ -1763,11 +1820,10 @@ async function savePendingAnnotation(note) {
   const debateId = pendingAnnotationSelection.debateId;
   const { annotation } = await apiRequest(`/api/debates/${encodeURIComponent(debateId)}/annotations`, {
     method: "POST",
-    body: JSON.stringify({
-      ...pendingAnnotationSelection,
-      userId: activeUser.id,
-      note: note.trim(),
-    }),
+      body: JSON.stringify({
+        ...pendingAnnotationSelection,
+        note: note.trim(),
+      }),
   });
 
   const annotations = getAnnotations(debateId);
@@ -1822,7 +1878,22 @@ function getMessageLabel(message) {
     return "System";
   }
 
-  return role === "me" ? "You" : "Opponent";
+  return role === "me" ? "You" : message.authorName || getRoomOpponent()?.name || "Opponent";
+}
+
+function getRoomOpponent() {
+  const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
+  return debate?.participants?.find((participant) => participant.userId !== activeUser?.id) || null;
+}
+
+function formatMessageTime(value) {
+  const date = value ? new Date(value) : null;
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function renderChatThread(debate) {
@@ -1831,17 +1902,22 @@ function renderChatThread(debate) {
   chatThread.replaceChildren();
   messages.forEach((message) => {
     const bubble = document.createElement("article");
+    const meta = document.createElement("div");
     const label = document.createElement("span");
+    const time = document.createElement("span");
     const text = document.createElement("p");
     const role = getMessageRole(message);
 
     bubble.className = `chat-message ${role}`;
+    meta.className = "message-meta";
     label.textContent = getMessageLabel(message);
+    time.textContent = role === "me" ? `Sent ${formatMessageTime(message.at)}` : formatMessageTime(message.at);
     text.className = "message-text";
     text.dataset.messageId = message.id;
     text.dataset.speaker = role;
     text.append(renderMessageText(message));
-    bubble.append(label, text);
+    meta.append(label, time);
+    bubble.append(meta, text);
     chatThread.append(bubble);
   });
   chatThread.scrollTop = chatThread.scrollHeight;
@@ -1853,20 +1929,37 @@ async function addChatMessage(speaker, text) {
     return;
   }
 
-  const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
-  const { message } = await apiRequest(`/api/debates/${encodeURIComponent(activeRoomDebateId)}/messages`, {
-    method: "POST",
-    body: JSON.stringify({
-      userId: speaker === "me" ? activeUser.id : null,
-      speaker: speaker === "system" ? "system" : "debater",
-      text: text.trim(),
-    }),
-  });
-  const messages = getChatMessages(activeRoomDebateId);
-  saveChatMessages(activeRoomDebateId, appendById(messages, message));
+  if (sendingChat) {
+    return false;
+  }
 
-  if (debate) {
-    renderChatThread(debate);
+  const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
+
+  sendingChat = true;
+  sendButton.disabled = true;
+  turnStatus.textContent = "Sending...";
+
+  try {
+    const { message } = await apiRequest(`/api/debates/${encodeURIComponent(activeRoomDebateId)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        text: text.trim(),
+      }),
+    });
+    const messages = getChatMessages(activeRoomDebateId);
+    saveChatMessages(activeRoomDebateId, appendById(messages, message));
+
+    if (debate) {
+      renderChatThread(debate);
+    }
+
+    return true;
+  } catch (error) {
+    turnStatus.textContent = error.message || "Could not send message.";
+    return false;
+  } finally {
+    sendingChat = false;
+    sendButton.disabled = false;
   }
 }
 
@@ -2095,12 +2188,7 @@ function startSpeechToText() {
 }
 
 async function startSession(user) {
-  localStorage.setItem(
-    sessionKey,
-    JSON.stringify({
-      userId: user.id,
-    }),
-  );
+  localStorage.setItem(sessionKey, "active");
 
   if (user.surveyCompleted) {
     await showApp(user);
@@ -2110,15 +2198,8 @@ async function startSession(user) {
 }
 
 async function restoreSession() {
-  const session = JSON.parse(localStorage.getItem(sessionKey) || "null");
-
-  if (!session) {
-    showAuth();
-    return;
-  }
-
   try {
-    const { user } = await apiRequest(`/api/users/${encodeURIComponent(session.userId)}`);
+    const { user } = await apiRequest("/api/auth/session");
 
     if (user.surveyCompleted) {
       await showApp(user);
@@ -2233,6 +2314,7 @@ async function createDebateProfile(selectedTopics, debateBio) {
   try {
     const response = await fetch("/api/profile", {
       method: "POST",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ selectedTopics, debateBio }),
     });
@@ -2257,7 +2339,13 @@ switchButton.addEventListener("click", () => {
   setMode(currentMode === "login" ? "signup" : "login");
 });
 
-function signOut() {
+async function signOut() {
+  try {
+    await apiRequest("/api/auth/logout", { method: "POST" });
+  } catch {
+    // Local sign-out should still clear browser state if the server is unreachable.
+  }
+
   localStorage.removeItem(sessionKey);
   form.reset();
   setMode("login");
@@ -2416,10 +2504,12 @@ findOpponentButton.addEventListener("click", async () => {
     const result = await apiRequest("/api/match-requests", {
       method: "POST",
       body: JSON.stringify({
-        userId: activeUser.id,
         topicId: activeTopic.id,
         topicTitle: activeTopic.title,
         stance: selectedStance,
+        topicCategory: activeTopic.category || "",
+        topicTags: activeTopic.tags || [],
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
       }),
     });
 
@@ -2484,9 +2574,13 @@ chatForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  await addChatMessage("me", message);
-  chatInput.value = "";
-  turnStatus.textContent = "Waiting for opponent";
+  const sent = await addChatMessage("me", message);
+
+  if (sent) {
+    chatInput.value = "";
+    sendRealtime({ type: "typing", debateId: activeRoomDebateId, isTyping: false });
+    turnStatus.textContent = "Waiting for opponent";
+  }
 });
 
 chatInput.addEventListener("keydown", (event) => {
@@ -2494,6 +2588,18 @@ chatInput.addEventListener("keydown", (event) => {
     event.preventDefault();
     chatForm.requestSubmit();
   }
+});
+
+chatInput.addEventListener("input", () => {
+  if (!activeRoomDebateId) {
+    return;
+  }
+
+  window.clearTimeout(typingBroadcastTimeout);
+  sendRealtime({ type: "typing", debateId: activeRoomDebateId, isTyping: Boolean(chatInput.value.trim()) });
+  typingBroadcastTimeout = window.setTimeout(() => {
+    sendRealtime({ type: "typing", debateId: activeRoomDebateId, isTyping: false });
+  }, 1200);
 });
 
 micButton.addEventListener("click", startSpeechToText);

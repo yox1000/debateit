@@ -1388,13 +1388,20 @@ h1 {
   box-shadow: 0 10px 24px rgba(42, 73, 105, 0.08);
 }
 
-.chat-message span {
-  display: block;
+.message-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 5px;
   font-size: 0.72rem;
   font-weight: 900;
   color: var(--muted);
   text-transform: uppercase;
+}
+
+.message-meta span:last-child {
+  flex: 0 0 auto;
+  opacity: 0.78;
 }
 
 .chat-message p {

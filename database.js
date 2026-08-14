@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { DatabaseSync } = require("node:sqlite");
 
 const dataDir = path.join(__dirname, "data");
@@ -10,6 +11,9 @@ fs.mkdirSync(dataDir, { recursive: true });
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA foreign_keys = ON");
 db.exec("PRAGMA journal_mode = WAL");
+
+const passwordHashPrefix = "scrypt";
+const sessionTtlMs = 1000 * 60 * 60 * 24 * 14;
 
 function nowIso() {
   return new Date().toISOString();
@@ -55,6 +59,39 @@ function createId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(String(password), salt, 64).toString("hex");
+  return `${passwordHashPrefix}$${salt}$${hash}`;
+}
+
+function verifyPassword(password, storedPassword = "") {
+  if (!storedPassword.startsWith(`${passwordHashPrefix}$`)) {
+    return String(password) === storedPassword;
+  }
+
+  const [, salt, storedHash] = storedPassword.split("$");
+
+  if (!salt || !storedHash) {
+    return false;
+  }
+
+  const actualHash = crypto.scryptSync(String(password), salt, 64);
+  const expectedHash = Buffer.from(storedHash, "hex");
+
+  return expectedHash.length === actualHash.length && crypto.timingSafeEqual(expectedHash, actualHash);
+}
+
+function columnExists(table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((row) => row.name === column);
+}
+
+function ensureColumn(table, column, definition) {
+  if (!columnExists(table, column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 function initDatabase() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -79,6 +116,7 @@ function initDatabase() {
       topic_title TEXT NOT NULL,
       stance TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'open',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -141,8 +179,17 @@ function initDatabase() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_match_requests_lookup
       ON match_requests(topic_id, stance, status);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user
+      ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_debate_participants_user
       ON debate_participants(user_id);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_debate
@@ -150,6 +197,8 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_annotations_debate
       ON annotations(debate_id, created_at);
   `);
+
+  ensureColumn("match_requests", "metadata_json", "TEXT NOT NULL DEFAULT '{}'");
 }
 
 function seedUsers() {
@@ -161,10 +210,21 @@ function seedUsers() {
   `);
 
   [
-    ["empty-account", "Test Account", "", "", 0, "United States"],
-    ["alex-account", "Alex", "alex@debate.it", "test", 120, "United States"],
-    ["sam-account", "Sam", "sam@debate.it", "test", 95, "Canada"],
+    ["empty-account", "Test Account", "", hashPassword(""), 0, "United States"],
+    ["alex-account", "Alex", "alex@debate.it", hashPassword("test"), 120, "United States"],
+    ["sam-account", "Sam", "sam@debate.it", hashPassword("test"), 95, "Canada"],
   ].forEach((user) => insert.run(...user, createdAt, createdAt));
+}
+
+function migrateLegacyPasswords() {
+  const rows = db.prepare("SELECT id, password FROM users").all();
+  const update = db.prepare("UPDATE users SET password = ?, updated_at = ? WHERE id = ?");
+
+  rows.forEach((row) => {
+    if (!row.password.startsWith(`${passwordHashPrefix}$`)) {
+      update.run(hashPassword(row.password), nowIso(), row.id);
+    }
+  });
 }
 
 function toUser(row) {
@@ -221,11 +281,13 @@ function toProposal(row) {
 }
 
 function getUserByCredentials(email = "", password = "") {
-  return toUser(
-    db
-      .prepare("SELECT * FROM users WHERE email = ? AND password = ?")
-      .get(String(email).trim(), String(password)),
-  );
+  const row = db.prepare("SELECT * FROM users WHERE email = ?").get(String(email).trim());
+
+  if (!row || !verifyPassword(password, row.password)) {
+    return null;
+  }
+
+  return toUser(row);
 }
 
 function createUser({ name, email = "", password = "" }) {
@@ -243,9 +305,51 @@ function createUser({ name, email = "", password = "" }) {
   db.prepare(`
     INSERT INTO users (id, name, email, password, country, created_at, updated_at)
     VALUES (?, ?, ?, ?, '', ?, ?)
-  `).run(id, String(name || "New Debater").trim(), String(email).trim(), String(password), createdAt, createdAt);
+  `).run(id, String(name || "New Debater").trim(), String(email).trim(), hashPassword(password), createdAt, createdAt);
 
   return getUserById(id);
+}
+
+function createSession(userId) {
+  const createdAt = nowIso();
+  const expiresAt = new Date(Date.now() + sessionTtlMs).toISOString();
+  const id = crypto.randomBytes(32).toString("hex");
+
+  db.prepare(`
+    INSERT INTO sessions (id, user_id, created_at, expires_at)
+    VALUES (?, ?, ?, ?)
+  `).run(id, userId, createdAt, expiresAt);
+
+  return { id, userId, expiresAt, maxAgeSeconds: Math.floor(sessionTtlMs / 1000) };
+}
+
+function deleteSession(sessionId) {
+  if (sessionId) {
+    db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+  }
+}
+
+function cleanupExpiredSessions() {
+  db.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(nowIso());
+}
+
+function getUserBySession(sessionId) {
+  cleanupExpiredSessions();
+
+  if (!sessionId) {
+    return null;
+  }
+
+  return toUser(
+    db
+      .prepare(`
+        SELECT u.*
+        FROM sessions s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.id = ? AND s.expires_at > ?
+      `)
+      .get(sessionId, nowIso()),
+  );
 }
 
 function getUserById(userId) {
@@ -287,6 +391,23 @@ function updateUserProfile(userId, payload = {}) {
   return getUserById(userId);
 }
 
+function listDebateParticipants(debateId) {
+  return db
+    .prepare(`
+      SELECT p.user_id, u.name, p.stance
+      FROM debate_participants p
+      JOIN users u ON u.id = p.user_id
+      WHERE p.debate_id = ?
+      ORDER BY p.rowid ASC
+    `)
+    .all(debateId)
+    .map((row) => ({
+      userId: row.user_id,
+      name: row.name,
+      stance: row.stance,
+    }));
+}
+
 function listDebatesForUser(userId) {
   const debateRows = db
     .prepare(`
@@ -308,6 +429,7 @@ function listDebatesForUser(userId) {
       status: row.status,
       stance: row.stance,
       detail: row.detail,
+      participants: listDebateParticipants(row.id),
       updatedAt: row.updated_at,
     }));
   const requestRows = db
@@ -391,9 +513,65 @@ function createMatchProposal(currentRequest, opponentRequest) {
   return getProposalById(id);
 }
 
-function createMatchRequest({ userId, topicId, topicTitle, stance }) {
+function getRequestMetadata(request) {
+  return parseJson(request.metadata_json, {});
+}
+
+function getUserMatchSnapshot(userId) {
+  const user = getUserById(userId);
+  const profile = user?.debateProfile || {};
+
+  return {
+    country: user?.country || "",
+    interests: user?.interests || [],
+    debateStyle: profile.debateStyle || "",
+    matchingSignals: profile.matchingSignals || {},
+  };
+}
+
+function scoreRequestCompatibility(currentRequest, candidateRequest) {
+  const current = getRequestMetadata(currentRequest);
+  const candidate = getRequestMetadata(candidateRequest);
+  let score = 0;
+
+  if (current.country && current.country === candidate.country) {
+    score += 4;
+  }
+
+  if (current.timezone && current.timezone === candidate.timezone) {
+    score += 4;
+  }
+
+  if (current.debateStyle && current.debateStyle === candidate.debateStyle) {
+    score += 6;
+  }
+
+  const currentInterests = new Set(current.interests || []);
+  (candidate.interests || []).forEach((interest) => {
+    if (currentInterests.has(interest)) {
+      score += 3;
+    }
+  });
+
+  const currentTags = new Set(current.topicTags || []);
+  (candidate.topicTags || []).forEach((tag) => {
+    if (currentTags.has(tag)) {
+      score += 2;
+    }
+  });
+
+  return score;
+}
+
+function createMatchRequest({ userId, topicId, topicTitle, stance, metadata = {} }) {
   const createdAt = nowIso();
-  const opposite = db
+  const userSnapshot = getUserMatchSnapshot(userId);
+  const requestMetadata = {
+    ...metadata,
+    ...userSnapshot,
+    requestedAt: createdAt,
+  };
+  const candidates = db
     .prepare(`
       SELECT *
       FROM match_requests
@@ -402,18 +580,21 @@ function createMatchRequest({ userId, topicId, topicTitle, stance }) {
         AND user_id <> ?
         AND stance <> ?
       ORDER BY created_at ASC
-      LIMIT 1
     `)
-    .get(topicId, userId, stance);
+    .all(topicId, userId, stance);
 
   const currentId = createId("request");
   db.prepare(`
     INSERT INTO match_requests (
-      id, user_id, topic_id, topic_title, stance, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)
-  `).run(currentId, userId, topicId, topicTitle, stance, createdAt, createdAt);
+      id, user_id, topic_id, topic_title, stance, status, metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)
+  `).run(currentId, userId, topicId, topicTitle, stance, json(requestMetadata, {}), createdAt, createdAt);
 
   const current = db.prepare("SELECT * FROM match_requests WHERE id = ?").get(currentId);
+  const opposite = candidates
+    .map((request) => ({ request, score: scoreRequestCompatibility(current, request) }))
+    .sort((a, b) => b.score - a.score || new Date(a.request.created_at).getTime() - new Date(b.request.created_at).getTime())
+    .at(0)?.request;
 
   if (opposite) {
     const proposal = createMatchProposal(current, opposite);
@@ -433,6 +614,7 @@ function createMatchRequest({ userId, topicId, topicTitle, stance }) {
       topicId: current.topic_id,
       topicTitle: current.topic_title,
       stance: current.stance,
+      metadata: requestMetadata,
       requestedAt: current.created_at,
     },
   };
@@ -595,39 +777,66 @@ function rejectProposal(proposalId, userId) {
 function listMessages(debateId) {
   return db
     .prepare(`
-      SELECT id, debate_id, user_id, speaker, body, created_at
-      FROM chat_messages
-      WHERE debate_id = ?
-      ORDER BY created_at ASC
+      SELECT m.id,
+             m.debate_id,
+             m.user_id,
+             m.speaker,
+             m.body,
+             m.created_at,
+             u.name AS author_name
+      FROM chat_messages m
+      LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.debate_id = ?
+      ORDER BY m.created_at ASC
     `)
     .all(debateId)
     .map((row) => ({
       id: row.id,
       debateId: row.debate_id,
       userId: row.user_id,
+      authorName: row.author_name || "",
       speaker: row.speaker,
       text: row.body,
       at: row.created_at,
     }));
 }
 
+function isDebateParticipant(debateId, userId) {
+  return Boolean(
+    db
+      .prepare("SELECT 1 FROM debate_participants WHERE debate_id = ? AND user_id = ?")
+      .get(debateId, userId),
+  );
+}
+
 function createMessage({ debateId, userId = null, speaker, text }) {
+  if (userId && !isDebateParticipant(debateId, userId)) {
+    const error = new Error("User is not part of this debate.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const body = String(text || "").trim();
+
+  if (!body) {
+    const error = new Error("Message cannot be empty.");
+    error.statusCode = 400;
+    throw error;
+  }
+
   const id = createId("message");
   const createdAt = nowIso();
 
   db.prepare(`
     INSERT INTO chat_messages (id, debate_id, user_id, speaker, body, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, debateId, userId, speaker, text, createdAt);
+  `).run(id, debateId, userId, speaker, body, createdAt);
 
   return listMessages(debateId).find((message) => message.id === id);
 }
 
 function listDebateParticipantIds(debateId) {
-  return db
-    .prepare("SELECT user_id FROM debate_participants WHERE debate_id = ?")
-    .all(debateId)
-    .map((row) => row.user_id);
+  return listDebateParticipants(debateId).map((participant) => participant.userId);
 }
 
 function listAnnotations(debateId) {
@@ -663,6 +872,12 @@ function listAnnotations(debateId) {
 }
 
 function createAnnotation({ debateId, messageId, userId, speaker, start, end, quote, note }) {
+  if (!isDebateParticipant(debateId, userId)) {
+    const error = new Error("User is not part of this debate.");
+    error.statusCode = 403;
+    throw error;
+  }
+
   const id = createId("note");
   const createdAt = nowIso();
 
@@ -691,6 +906,7 @@ function getStatus() {
 
 initDatabase();
 seedUsers();
+migrateLegacyPasswords();
 
 module.exports = {
   createAnnotation,
@@ -699,11 +915,16 @@ module.exports = {
   clearDebateRuntimeData,
   createMessage,
   createMatchRequest,
+  createSession,
   createUser,
+  deleteSession,
   listDebateParticipantIds,
+  listDebateParticipants,
   getStatus,
   getUserByCredentials,
   getUserById,
+  getUserBySession,
+  isDebateParticipant,
   listAnnotations,
   listDebatesForUser,
   listMessages,
