@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Debate.it | Login</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="auth-shell" id="auth-view">
+      <section class="auth-panel" aria-label="Authentication">
+        <a class="brand-mark" href="/" aria-label="Debate.it home">
+          <span class="brand-emblem" aria-hidden="true">
+            <svg class="gavel-icon" viewBox="0 0 32 32" focusable="false">
+              <path d="M13.3 4.7 18 9.4l-2.2 2.2 2.8 2.8 2.2-2.2 4.7 4.7-5.2 5.2-4.7-4.7 2.1-2.1-2.8-2.8-2.1 2.1-4.7-4.7 5.2-5.2Z" />
+              <path d="m5.7 24.2 8.1-8.1 2.1 2.1-8.1 8.1H5.7v-2.1Z" />
+              <path d="M13.3 24.7h13.5v2.8H13.3z" />
+            </svg>
+          </span>
+          <span>Debate.it</span>
+        </a>
+        <div class="mode-toggle" role="tablist" aria-label="Authentication mode">
+          <button class="mode-button active" type="button" role="tab" aria-selected="true" data-mode="login">
+            Log in
+          </button>
+          <button class="mode-button" type="button" role="tab" aria-selected="false" data-mode="signup">
+            Sign up
+          </button>
+        </div>
+
+        <div class="form-heading">
+          <p class="eyebrow" id="form-kicker">Welcome back</p>
+          <h1 id="form-title">Log in to Debate.it</h1>
+        </div>
+
+        <form class="auth-form" id="auth-form" novalidate>
+          <label class="field" id="name-field" hidden>
+            <span>Name</span>
+            <input type="text" name="name" autocomplete="name" placeholder="Jordan Lee" />
+          </label>
+
+          <label class="field">
+            <span>Email</span>
+            <input type="email" name="email" autocomplete="email" placeholder="you@example.com" />
+          </label>
+
+          <label class="field">
+            <span>Password</span>
+            <input
+              type="password"
+              name="password"
+              autocomplete="current-password"
+              placeholder="Enter your password"
+            />
+          </label>
+
+          <div class="form-row" id="login-options">
+            <label class="check">
+              <input type="checkbox" name="remember" />
+              <span>Remember me</span>
+            </label>
+            <a href="/">Forgot password?</a>
+          </div>
+
+          <button class="primary-button" type="submit" id="submit-button">Log in</button>
+          <p class="form-message" id="form-message" role="status" aria-live="polite"></p>
+        </form>
+
+        <div class="divider"><span>test accounts</span></div>
+
+        <div class="test-grid">
+          <button class="secondary-button" type="button" data-login="" data-password="">
+            <span class="button-icon" aria-hidden="true">0</span>
+            Empty
+          </button>
+          <button class="secondary-button" type="button" data-login="alex@debate.it" data-password="test">
+            <span class="button-icon" aria-hidden="true">A</span>
+            Alex
+          </button>
+          <button class="secondary-button" type="button" data-login="sam@debate.it" data-password="test">
+            <span class="button-icon" aria-hidden="true">S</span>
+            Sam
+          </button>
+        </div>
+
+        <p class="switch-copy">
+          <span id="switch-text">New to Debate.it?</span>
+          <button type="button" id="switch-mode">Create an account</button>
+        </p>
+      </section>
+    </main>
+
+    <main class="app-shell" id="app-view" hidden>
+      <header class="app-header">
+        <a class="brand-mark app-brand" href="/" aria-label="Debate.it home">
+          <span class="brand-emblem" aria-hidden="true">
+            <svg class="gavel-icon" viewBox="0 0 32 32" focusable="false">
+              <path d="M13.3 4.7 18 9.4l-2.2 2.2 2.8 2.8 2.2-2.2 4.7 4.7-5.2 5.2-4.7-4.7 2.1-2.1-2.8-2.8-2.1 2.1-4.7-4.7 5.2-5.2Z" />
+              <path d="m5.7 24.2 8.1-8.1 2.1 2.1-8.1 8.1H5.7v-2.1Z" />
+              <path d="M13.3 24.7h13.5v2.8H13.3z" />
+            </svg>
+          </span>
+          <span>Debate.it</span>
+        </a>
+        <div class="header-actions" id="app-header-actions">
+          <button class="icon-button document-button" type="button" id="my-debates" aria-label="My debates">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M6 2.75h8.4L19 7.35v13.9H6V2.75Zm2 2v14.5h9V8.4h-3.65V4.75H8Zm7.1 1.4v.5H16l-.9-.5ZM9.25 11h5.5v1.5h-5.5V11Zm0 3.25h5.5v1.5h-5.5v-1.5Zm0-6.5h3v1.5h-3v-1.5Z" />
+            </svg>
+          </button>
+          <button class="icon-button exit-button" type="button" id="sign-out" aria-label="Sign out">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M5 3.75h8.25v2H7v12.5h6.25v2H5V3.75Zm9.6 4.2 1.4-1.4L21.45 12 16 17.45l-1.4-1.4 3.05-3.05H10.5v-2h7.15L14.6 7.95Z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="home-panel" aria-label="Debate.it home">
+        <div class="home-heading">
+          <p class="eyebrow">Mock account</p>
+          <h1>Welcome, <span id="account-name">Debater</span></h1>
+        </div>
+
+        <section class="topic-search-panel" aria-label="Search debate topics">
+          <div class="matches-head">
+            <div>
+              <p class="eyebrow">Topic catalog</p>
+              <h2>Search topics</h2>
+            </div>
+            <span class="source-badge" id="topic-count">100 topics</span>
+          </div>
+
+          <label class="field search-field">
+            <span>Find a debate topic</span>
+            <input
+              type="search"
+              id="topic-search"
+              autocomplete="off"
+              placeholder="Search AI, schools, climate, sports, history..."
+            />
+            <div class="search-suggestions" id="search-suggestions" hidden></div>
+          </label>
+        </section>
+
+        <section class="profile-panel" aria-label="Your debate profile">
+          <div class="profile-head">
+            <div>
+              <p class="eyebrow">Your debate profile</p>
+              <h2 id="profile-style">Profile pending</h2>
+            </div>
+            <span class="source-badge" id="profile-source">Local</span>
+          </div>
+
+          <p class="profile-summary" id="profile-summary">
+            Complete the first-login survey to generate debate recommendations.
+          </p>
+
+          <div class="profile-columns">
+            <div>
+              <h3>Top interests</h3>
+              <div class="chip-list" id="profile-topics"></div>
+            </div>
+            <div>
+              <h3>Matching signals</h3>
+              <dl class="signal-list" id="profile-signals"></dl>
+            </div>
+          </div>
+
+          <div class="suggested-block">
+            <h3>Suggested debates</h3>
+            <ol class="suggested-list" id="profile-suggestions"></ol>
+          </div>
+        </section>
+
+        <section class="matches-panel" aria-label="Recommended debate matches">
+          <div class="matches-head">
+            <div>
+              <p class="eyebrow">Matching engine</p>
+              <h2>Recommended topics</h2>
+            </div>
+            <span class="source-badge" id="match-source">Loading</span>
+          </div>
+          <div class="match-grid" id="match-grid">
+            <p class="profile-summary">Loading topic matches...</p>
+          </div>
+        </section>
+
+        <div class="pillar-grid">
+          <article class="pillar-card">
+            <span class="pillar-kicker">1v1 Arena</span>
+            <h2>Find a live debate</h2>
+            <p>Anonymized voice, stance-based matching, and clear rounds.</p>
+          </article>
+          <article class="pillar-card">
+            <span class="pillar-kicker">AI Co-Pilot</span>
+            <h2>Prepare your case</h2>
+            <p>Notes, claim checks, and a clean post-match summary.</p>
+          </article>
+          <article class="pillar-card">
+            <span class="pillar-kicker">Prestige Engine</span>
+            <h2>Build your record</h2>
+            <p>Topic XP, civility ratings, and leaderboards by category.</p>
+          </article>
+        </div>
+
+        <button class="primary-button home-cta" type="button">Enter 1v1 Arena</button>
+      </section>
+    </main>
+
+    <main class="debate-shell" id="debate-view" hidden>
+      <header class="app-header">
+        <a class="brand-mark app-brand" href="/" aria-label="Debate.it home">
+          <span class="brand-emblem" aria-hidden="true">
+            <svg class="gavel-icon" viewBox="0 0 32 32" focusable="false">
+              <path d="M13.3 4.7 18 9.4l-2.2 2.2 2.8 2.8 2.2-2.2 4.7 4.7-5.2 5.2-4.7-4.7 2.1-2.1-2.8-2.8-2.1 2.1-4.7-4.7 5.2-5.2Z" />
+              <path d="m5.7 24.2 8.1-8.1 2.1 2.1-8.1 8.1H5.7v-2.1Z" />
+              <path d="M13.3 24.7h13.5v2.8H13.3z" />
+            </svg>
+          </span>
+          <span>Debate.it</span>
+        </a>
+        <div class="header-actions" id="debate-header-actions">
+          <button class="icon-button home-button" type="button" id="back-home" aria-label="Home">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M3.5 11.2 12 4l8.5 7.2-1.3 1.5-1.2-1v8.55H6V11.7l-1.2 1-1.3-1.5ZM8 9.95v8.3h3v-5h2v5h3v-8.3l-4-3.4-4 3.4Z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="debate-panel" aria-label="Debate topic">
+        <p class="eyebrow" id="debate-category">Topic</p>
+        <h1 id="debate-title">Selected debate topic</h1>
+        <div class="chip-list debate-tags" id="debate-tags"></div>
+
+        <div class="stance-grid" aria-label="Choose a stance">
+          <button class="stance-card" type="button" data-stance="Affirm">
+            <span>Affirm</span>
+            <strong>Argue yes</strong>
+          </button>
+          <button class="stance-card" type="button" data-stance="Oppose">
+            <span>Oppose</span>
+            <strong>Argue no</strong>
+          </button>
+        </div>
+
+        <div class="prep-panel">
+          <h2>Debate setup</h2>
+          <p id="debate-prompt">Choose a side to start a debate on this topic.</p>
+          <p class="matchmaking-status" id="matchmaking-status">
+            Pick a side before entering the matchmaking queue.
+          </p>
+          <button class="primary-button home-cta" type="button" id="find-opponent" disabled>Find opponent</button>
+        </div>
+      </section>
+    </main>
+
+    <main class="room-shell" id="room-view" hidden>
+      <header class="app-header">
+        <a class="brand-mark app-brand" href="/" aria-label="Debate.it home">
+          <span class="brand-emblem" aria-hidden="true">
+            <svg class="gavel-icon" viewBox="0 0 32 32" focusable="false">
+              <path d="M13.3 4.7 18 9.4l-2.2 2.2 2.8 2.8 2.2-2.2 4.7 4.7-5.2 5.2-4.7-4.7 2.1-2.1-2.8-2.8-2.1 2.1-4.7-4.7 5.2-5.2Z" />
+              <path d="m5.7 24.2 8.1-8.1 2.1 2.1-8.1 8.1H5.7v-2.1Z" />
+              <path d="M13.3 24.7h13.5v2.8H13.3z" />
+            </svg>
+          </span>
+          <span>Debate.it</span>
+        </a>
+        <div class="header-actions" id="room-header-actions">
+          <button class="icon-button home-button" type="button" id="room-home" aria-label="Home">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M3.5 11.2 12 4l8.5 7.2-1.3 1.5-1.2-1v8.55H6V11.7l-1.2 1-1.3-1.5ZM8 9.95v8.3h3v-5h2v5h3v-8.3l-4-3.4-4 3.4Z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="room-panel" aria-label="Active debate room">
+        <p class="eyebrow">Active debate</p>
+        <h1 id="room-title">Debate room</h1>
+        <p class="profile-summary" id="room-detail">Match details</p>
+
+        <div class="debate-room-grid">
+          <div class="chat-stack">
+            <div class="chat-thread" id="chat-thread" aria-label="Debate messages"></div>
+
+            <form class="chat-composer" id="chat-form">
+              <div class="turn-status" id="turn-status">Your turn</div>
+              <div class="composer-row">
+                <button class="icon-button mic-button" type="button" id="mic-button" aria-label="Use speech to text">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M12 3.25a3.75 3.75 0 0 1 3.75 3.75v4a3.75 3.75 0 0 1-7.5 0V7A3.75 3.75 0 0 1 12 3.25Zm-1.75 7.75a1.75 1.75 0 0 0 3.5 0V7a1.75 1.75 0 0 0-3.5 0v4ZM6 10.5h2a4 4 0 0 0 8 0h2a6 6 0 0 1-5 5.92v2.08h3v2H8v-2h3v-2.08a6 6 0 0 1-5-5.92Z" />
+                  </svg>
+                </button>
+                <textarea id="chat-input" rows="1" placeholder="Make your argument..."></textarea>
+                <button class="primary-button send-button" type="submit">Send</button>
+              </div>
+              <p class="composer-hint">Enter to send. Shift+Enter for a new line.</p>
+            </form>
+          </div>
+
+          <aside class="copilot-panel" aria-label="AI debate co-pilot">
+            <div class="copilot-head">
+              <div>
+                <p class="eyebrow">AI Co-Pilot</p>
+                <h2>Debate support</h2>
+              </div>
+              <span class="source-badge">Mock</span>
+            </div>
+
+            <div class="copilot-tabs" role="tablist" aria-label="Co-Pilot tools">
+              <button class="copilot-tab active" type="button" role="tab" aria-selected="true" data-copilot-tab="notes">
+                Notes
+              </button>
+              <button class="copilot-tab" type="button" role="tab" aria-selected="false" data-copilot-tab="facts">
+                Facts
+              </button>
+              <button class="copilot-tab" type="button" role="tab" aria-selected="false" data-copilot-tab="focus">
+                Focus
+              </button>
+            </div>
+
+            <div class="copilot-content" id="copilot-content" aria-live="polite"></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <aside class="notification-center" id="notification-center" hidden>
+      <button class="mail-button" type="button" id="mail-button" aria-label="Open match notifications">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M3.75 5.5h16.5v13H3.75v-13Zm1.5 2.4v9.1h13.5V7.9l-6.75 5.15L5.25 7.9Zm.98-.9L12 11.4 17.77 7H6.23Z" />
+        </svg>
+        <span class="notification-badge" id="notification-badge" hidden>1</span>
+      </button>
+
+      <section class="notification-panel" id="notification-panel" hidden aria-label="Match notifications">
+        <div class="notification-head">
+          <strong>Match inbox</strong>
+          <span id="notification-state">No new matches</span>
+        </div>
+        <div class="notification-list" id="notification-list">
+          <p>No active debate invitations.</p>
+        </div>
+      </section>
+    </aside>
+
+    <main class="survey-shell" id="survey-view" hidden>
+      <section class="survey-panel" aria-label="Debate interests survey">
+        <a class="brand-mark" href="/" aria-label="Debate.it home">
+          <span class="brand-emblem" aria-hidden="true">
+            <svg class="gavel-icon" viewBox="0 0 32 32" focusable="false">
+              <path d="M13.3 4.7 18 9.4l-2.2 2.2 2.8 2.8 2.2-2.2 4.7 4.7-5.2 5.2-4.7-4.7 2.1-2.1-2.8-2.8-2.1 2.1-4.7-4.7 5.2-5.2Z" />
+              <path d="m5.7 24.2 8.1-8.1 2.1 2.1-8.1 8.1H5.7v-2.1Z" />
+              <path d="M13.3 24.7h13.5v2.8H13.3z" />
+            </svg>
+          </span>
+          <span>Debate.it</span>
+        </a>
+
+        <div class="form-heading">
+          <p class="eyebrow">First login</p>
+          <h1>What do you want to debate?</h1>
+        </div>
+
+        <form class="survey-form" id="survey-form">
+          <fieldset class="topic-fieldset">
+            <legend>Pick a few interests</legend>
+            <div class="topic-grid">
+              <label class="topic-chip">
+                <input type="checkbox" name="topics" value="Politics" />
+                <span>Politics</span>
+              </label>
+              <label class="topic-chip">
+                <input type="checkbox" name="topics" value="Technology" />
+                <span>Technology</span>
+              </label>
+              <label class="topic-chip">
+                <input type="checkbox" name="topics" value="Culture" />
+                <span>Culture</span>
+              </label>
+              <label class="topic-chip">
+                <input type="checkbox" name="topics" value="Science" />
+                <span>Science</span>
+              </label>
+              <label class="topic-chip">
+                <input type="checkbox" name="topics" value="Ethics" />
+                <span>Ethics</span>
+              </label>
+              <label class="topic-chip">
+                <input type="checkbox" name="topics" value="Sports" />
+                <span>Sports</span>
+              </label>
+              <label class="topic-chip">
+                <input type="checkbox" name="topics" value="History" />
+                <span>History</span>
+              </label>
+              <label class="topic-chip">
+                <input type="checkbox" name="topics" value="Business" />
+                <span>Business</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <label class="field long-field">
+            <span>What makes a debate interesting to you?</span>
+            <textarea
+              name="debateBio"
+              rows="7"
+              placeholder="Write a paragraph or two about the topics, arguments, or formats you want to explore."
+            ></textarea>
+          </label>
+
+          <button class="primary-button" type="submit">Save interests</button>
+          <button class="text-button" type="button" id="skip-survey">Skip for now</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
