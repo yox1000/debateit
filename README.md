@@ -88,3 +88,19 @@ The server exposes a no-dependency WebSocket endpoint at `/ws`.
   annotations, room presence, and typing indicators are pushed live.
 - The frontend keeps a slower 30-second polling fallback for recovery if a
   socket disconnects.
+
+## Debate format
+
+Active debates use a fixed turn sequence:
+
+- Opening statement
+- Rebuttal
+- Cross-question
+- Closing statement
+- Finished
+
+The database stores the current phase, turn index, and turn deadline. Message
+creation is rejected unless the authenticated session belongs to the current
+speaker. When a valid message is sent, the server advances to the next turn and
+broadcasts the updated debate state. Expired timers advance when clients refresh
+debate state through the API.

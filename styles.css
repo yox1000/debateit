@@ -1365,6 +1365,69 @@ h1 {
   min-width: 0;
 }
 
+.debate-format {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(52, 82, 119, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.debate-format span,
+.debate-format strong {
+  display: block;
+}
+
+.debate-format span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.debate-format strong {
+  margin-top: 3px;
+  color: var(--ink);
+}
+
+.turn-timer {
+  min-width: 66px;
+  text-align: right;
+  color: var(--blue-dark);
+  font-size: 1.15rem;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+}
+
+.phase-track {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.phase-pill {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(52, 82, 119, 0.14);
+  border-radius: 7px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.58);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.phase-pill.active {
+  color: var(--blue-dark);
+  border-color: rgba(51, 95, 159, 0.34);
+  background: rgba(225, 241, 255, 0.86);
+}
+
 .chat-thread {
   min-height: 380px;
   max-height: min(58vh, 620px);
@@ -1490,6 +1553,12 @@ h1 {
   border-color: rgba(51, 95, 159, 0.52);
   box-shadow: 0 0 0 4px rgba(51, 95, 159, 0.11);
   outline: none;
+}
+
+#chat-input:disabled {
+  color: rgba(31, 45, 61, 0.56);
+  background: rgba(239, 244, 248, 0.82);
+  cursor: not-allowed;
 }
 
 .send-button {

@@ -352,6 +352,14 @@
 
         <div class="debate-room-grid">
           <div class="chat-stack">
+            <div class="debate-format" id="debate-format" aria-live="polite">
+              <div>
+                <span id="phase-label">Opening statement</span>
+                <strong id="turn-speaker">Your turn</strong>
+              </div>
+              <div class="turn-timer" id="turn-timer">--:--</div>
+            </div>
+            <div class="phase-track" id="phase-track" aria-label="Debate phases"></div>
             <div class="chat-thread" id="chat-thread" aria-label="Debate messages"></div>
 
             <form class="chat-composer" id="chat-form">

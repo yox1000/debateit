@@ -879,6 +879,7 @@ const server = http.createServer(async (request, response) => {
       }
 
       const result = database.acceptProposal(proposalAccept[1], user.id);
+      const debateState = result.debateId ? database.getDebateTurnState(result.debateId) : null;
       sendJson(response, 200, result);
       broadcastToUsers(
         result.proposal.users.map((user) => user.userId),
@@ -886,6 +887,7 @@ const server = http.createServer(async (request, response) => {
           type: result.debateId ? "debate_started" : "proposal_updated",
           proposal: result.proposal,
           debateId: result.debateId,
+          debateState,
         },
       );
     } catch (error) {
@@ -923,12 +925,29 @@ const server = http.createServer(async (request, response) => {
   }
 
   const messagesMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/messages$/);
+  const debateStateMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/state$/);
+
+  if (request.method === "GET" && debateStateMatch) {
+    const user = requireDebateParticipant(request, response, debateStateMatch[1]);
+
+    if (user) {
+      const debateState = database.getDebateTurnState(debateStateMatch[1]);
+      sendJson(response, 200, { debateState });
+      broadcastDebate(debateStateMatch[1], {
+        type: "debate_state",
+        debateId: debateStateMatch[1],
+        debateState,
+      });
+    }
+    return;
+  }
 
   if (messagesMatch) {
     if (request.method === "GET") {
       const user = requireDebateParticipant(request, response, messagesMatch[1]);
 
       if (user) {
+        database.getDebateTurnState(messagesMatch[1]);
         sendJson(response, 200, { messages: database.listMessages(messagesMatch[1]) });
       }
       return;
@@ -950,11 +969,15 @@ const server = http.createServer(async (request, response) => {
           speaker: "debater",
           text: payload.text,
         });
-        sendJson(response, 201, { message });
+        const messages = database.listMessages(messagesMatch[1]);
+        const debateState = database.getDebateTurnState(messagesMatch[1]);
+        sendJson(response, 201, { message, messages, debateState });
         broadcastDebate(messagesMatch[1], {
           type: "chat_message",
           debateId: messagesMatch[1],
           message,
+          messages,
+          debateState,
         });
       } catch (error) {
         sendError(response, error);

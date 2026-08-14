@@ -47,6 +47,10 @@ const roomHomeButton = document.querySelector("#room-home");
 const roomHeaderActions = document.querySelector("#room-header-actions");
 const roomTitle = document.querySelector("#room-title");
 const roomDetail = document.querySelector("#room-detail");
+const phaseLabel = document.querySelector("#phase-label");
+const turnSpeaker = document.querySelector("#turn-speaker");
+const turnTimer = document.querySelector("#turn-timer");
+const phaseTrack = document.querySelector("#phase-track");
 const chatThread = document.querySelector("#chat-thread");
 const chatForm = document.querySelector("#chat-form");
 const chatInput = document.querySelector("#chat-input");
@@ -161,6 +165,14 @@ let realtimeManuallyClosed = false;
 let typingTimeout = 0;
 let typingBroadcastTimeout = 0;
 let sendingChat = false;
+let activeDebateState = null;
+let turnTimerInterval = 0;
+const phaseLabels = [
+  ["opening", "Opening"],
+  ["rebuttal", "Rebuttal"],
+  ["cross-question", "Cross-question"],
+  ["closing", "Closing"],
+];
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
@@ -223,6 +235,122 @@ function sendRealtime(payload) {
   }
 }
 
+function getActiveDebate() {
+  return getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId) || null;
+}
+
+function formatCountdown(seconds) {
+  const safeSeconds = Math.max(0, Number(seconds) || 0);
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = safeSeconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
+function getTurnSecondsRemaining(state) {
+  if (!state?.turnDeadlineAt) {
+    return 0;
+  }
+
+  return Math.max(0, Math.ceil((new Date(state.turnDeadlineAt).getTime() - Date.now()) / 1000));
+}
+
+function canSendInActiveDebate() {
+  return Boolean(activeDebateState && !activeDebateState.isFinished && activeDebateState.turnUserId === activeUser?.id);
+}
+
+function updateComposerAccess() {
+  const canSend = canSendInActiveDebate();
+  chatInput.disabled = !canSend;
+  sendButton.disabled = !canSend || sendingChat;
+  micButton.disabled = !canSend;
+  chatInput.placeholder = canSend ? "Make your argument..." : "Waiting for your turn...";
+}
+
+async function refreshDebateState(debateId = activeRoomDebateId) {
+  if (!debateId) {
+    return;
+  }
+
+  try {
+    const { debateState } = await apiRequest(`/api/debates/${encodeURIComponent(debateId)}/state`);
+    setDebateState(debateId, debateState);
+  } catch {
+    updateComposerAccess();
+  }
+}
+
+function renderDebateState(state = activeDebateState) {
+  activeDebateState = state || null;
+  window.clearInterval(turnTimerInterval);
+  phaseTrack.replaceChildren();
+
+  phaseLabels.forEach(([key, label]) => {
+    const item = document.createElement("span");
+    item.className = "phase-pill";
+    item.classList.toggle("active", state?.phaseKey === key);
+    item.textContent = label;
+    phaseTrack.append(item);
+  });
+
+  if (!state) {
+    phaseLabel.textContent = "Debate";
+    turnSpeaker.textContent = "Loading turn";
+    turnTimer.textContent = "--:--";
+    updateComposerAccess();
+    return;
+  }
+
+  phaseLabel.textContent = state.phaseLabel || "Debate";
+
+  if (state.isFinished) {
+    turnSpeaker.textContent = "Finished";
+    turnTimer.textContent = "Done";
+    turnStatus.textContent = "Debate finished";
+    updateComposerAccess();
+    return;
+  }
+
+  const isMyTurn = state.turnUserId === activeUser?.id;
+  turnSpeaker.textContent = isMyTurn ? "Your turn" : `${state.turnUserName || "Opponent"}'s turn`;
+  turnStatus.textContent = isMyTurn ? "Your turn" : `Waiting for ${state.turnUserName || "opponent"}`;
+  turnTimer.textContent = formatCountdown(getTurnSecondsRemaining(state));
+
+  turnTimerInterval = window.setInterval(() => {
+    const remaining = getTurnSecondsRemaining(state);
+    turnTimer.textContent = formatCountdown(remaining);
+
+    if (remaining <= 0) {
+      window.clearInterval(turnTimerInterval);
+      refreshDebateState(state.debateId || activeRoomDebateId);
+    }
+  }, 1000);
+
+  updateComposerAccess();
+}
+
+function setDebateState(debateId, state) {
+  if (!state) {
+    return;
+  }
+
+  const debates = getLocalDebates().map((debate) => {
+    if (debate.id !== debateId) {
+      return debate;
+    }
+
+    return {
+      ...debate,
+      status: state.status || debate.status,
+      turnState: { ...state, debateId },
+    };
+  });
+  saveLocalDebates(debates);
+
+  if (activeRoomDebateId === debateId) {
+    renderDebateState({ ...state, debateId });
+  }
+}
+
 function updateRealtimeStatus(status) {
   document.body.dataset.realtime = status;
 
@@ -276,6 +404,9 @@ async function handleRealtimeEvent(event) {
 
   if (event.type === "debate_started") {
     await refreshUserState(false);
+    if (event.debateState && event.debateId) {
+      setDebateState(event.debateId, event.debateState);
+    }
     glowMyDebatesIcon();
     showMyDebatesStatus("Active", "active");
     setUnread(activeUser.id, `active-${event.debateId}`);
@@ -292,8 +423,12 @@ async function handleRealtimeEvent(event) {
   }
 
   if (event.type === "chat_message") {
-    const messages = getChatMessages(event.debateId);
-    saveChatMessages(event.debateId, appendById(messages, event.message));
+    const messages = event.messages || appendById(getChatMessages(event.debateId), event.message);
+    saveChatMessages(event.debateId, messages);
+
+    if (event.debateState) {
+      setDebateState(event.debateId, event.debateState);
+    }
 
     if (event.debateId === activeRoomDebateId) {
       const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
@@ -303,8 +438,18 @@ async function handleRealtimeEvent(event) {
         renderChatThread(debate);
       }
 
-      turnStatus.textContent = role === "opponent" ? "Your turn" : "Waiting for opponent";
+      if (event.debateState?.isFinished) {
+        turnStatus.textContent = "Debate finished";
+      } else {
+        turnStatus.textContent = role === "opponent" ? "Your turn" : "Waiting for opponent";
+      }
     }
+    return;
+  }
+
+  if (event.type === "debate_state") {
+    setDebateState(event.debateId, event.debateState);
+    refreshOpenRealtimeViews();
     return;
   }
 
@@ -1516,6 +1661,9 @@ function leaveActiveRoom() {
     sendRealtime({ type: "leave_room", debateId: activeRoomDebateId });
     activeRoomDebateId = "";
   }
+
+  activeDebateState = null;
+  window.clearInterval(turnTimerInterval);
 }
 
 async function showApp(user) {
@@ -1643,6 +1791,8 @@ async function showDebateRoom(debateId) {
   roomTitle.textContent = debate.topicTitle;
   roomDetail.textContent = debate.detail;
   await loadRoomState(debateId);
+  activeDebateState = getActiveDebate()?.turnState || null;
+  renderDebateState(activeDebateState);
   sendRealtime({ type: "join_room", debateId });
   renderChatThread(debate);
   notificationPanel.hidden = true;
@@ -1718,13 +1868,15 @@ function saveAnnotations(debateId, annotations) {
 }
 
 async function loadRoomState(debateId) {
-  const [messagesData, annotationsData] = await Promise.all([
+  const [messagesData, annotationsData, stateData] = await Promise.all([
     apiRequest(`/api/debates/${encodeURIComponent(debateId)}/messages`),
     apiRequest(`/api/debates/${encodeURIComponent(debateId)}/annotations`),
+    apiRequest(`/api/debates/${encodeURIComponent(debateId)}/state`),
   ]);
 
   messageCache.set(debateId, messagesData.messages || []);
   annotationCache.set(debateId, annotationsData.annotations || []);
+  setDebateState(debateId, stateData.debateState);
 }
 
 function renderMessageText(message) {
@@ -1820,10 +1972,10 @@ async function savePendingAnnotation(note) {
   const debateId = pendingAnnotationSelection.debateId;
   const { annotation } = await apiRequest(`/api/debates/${encodeURIComponent(debateId)}/annotations`, {
     method: "POST",
-      body: JSON.stringify({
-        ...pendingAnnotationSelection,
-        note: note.trim(),
-      }),
+    body: JSON.stringify({
+      ...pendingAnnotationSelection,
+      note: note.trim(),
+    }),
   });
 
   const annotations = getAnnotations(debateId);
@@ -1898,6 +2050,7 @@ function formatMessageTime(value) {
 
 function renderChatThread(debate) {
   const messages = getChatMessages(debate.id);
+  renderDebateState(getActiveDebate()?.turnState || debate.turnState || activeDebateState);
 
   chatThread.replaceChildren();
   messages.forEach((message) => {
@@ -1940,14 +2093,17 @@ async function addChatMessage(speaker, text) {
   turnStatus.textContent = "Sending...";
 
   try {
-    const { message } = await apiRequest(`/api/debates/${encodeURIComponent(activeRoomDebateId)}/messages`, {
+    const { message, messages, debateState } = await apiRequest(`/api/debates/${encodeURIComponent(activeRoomDebateId)}/messages`, {
       method: "POST",
       body: JSON.stringify({
         text: text.trim(),
       }),
     });
-    const messages = getChatMessages(activeRoomDebateId);
-    saveChatMessages(activeRoomDebateId, appendById(messages, message));
+    saveChatMessages(activeRoomDebateId, messages || appendById(getChatMessages(activeRoomDebateId), message));
+
+    if (debateState) {
+      setDebateState(activeRoomDebateId, debateState);
+    }
 
     if (debate) {
       renderChatThread(debate);
@@ -1959,7 +2115,7 @@ async function addChatMessage(speaker, text) {
     return false;
   } finally {
     sendingChat = false;
-    sendButton.disabled = false;
+    updateComposerAccess();
   }
 }
 

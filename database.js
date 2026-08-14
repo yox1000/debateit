@@ -14,9 +14,19 @@ db.exec("PRAGMA journal_mode = WAL");
 
 const passwordHashPrefix = "scrypt";
 const sessionTtlMs = 1000 * 60 * 60 * 24 * 14;
+const debatePhases = [
+  { key: "opening", label: "Opening statement", durationSeconds: 180 },
+  { key: "rebuttal", label: "Rebuttal", durationSeconds: 180 },
+  { key: "cross-question", label: "Cross-question", durationSeconds: 120 },
+  { key: "closing", label: "Closing statement", durationSeconds: 120 },
+];
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function addSecondsIso(value, seconds) {
+  return new Date(new Date(value).getTime() + seconds * 1000).toISOString();
 }
 
 function json(value, fallback = null) {
@@ -145,6 +155,9 @@ function initDatabase() {
       topic_id TEXT,
       topic_title TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
+      phase_key TEXT NOT NULL DEFAULT 'opening',
+      turn_index INTEGER NOT NULL DEFAULT 0,
+      turn_deadline_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -199,6 +212,9 @@ function initDatabase() {
   `);
 
   ensureColumn("match_requests", "metadata_json", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn("debates", "phase_key", "TEXT NOT NULL DEFAULT 'opening'");
+  ensureColumn("debates", "turn_index", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn("debates", "turn_deadline_at", "TEXT");
 }
 
 function seedUsers() {
@@ -225,6 +241,19 @@ function migrateLegacyPasswords() {
       update.run(hashPassword(row.password), nowIso(), row.id);
     }
   });
+}
+
+function migrateLegacyDebateTurns() {
+  const updatedAt = nowIso();
+  db.prepare(`
+    UPDATE debates
+    SET phase_key = 'opening',
+        turn_index = 0,
+        turn_deadline_at = ?,
+        updated_at = ?
+    WHERE status = 'active'
+      AND (turn_deadline_at IS NULL OR turn_deadline_at = '')
+  `).run(addSecondsIso(updatedAt, debatePhases[0].durationSeconds), updatedAt);
 }
 
 function toUser(row) {
@@ -408,12 +437,136 @@ function listDebateParticipants(debateId) {
     }));
 }
 
+function getDebateRow(debateId) {
+  return db.prepare("SELECT * FROM debates WHERE id = ?").get(debateId);
+}
+
+function getPhaseByTurnIndex(turnIndex, participantCount = 2) {
+  return debatePhases[Math.floor(turnIndex / Math.max(participantCount, 1))] || null;
+}
+
+function createRawSystemMessage(debateId, text) {
+  const id = createId("message");
+  const createdAt = nowIso();
+
+  db.prepare(`
+    INSERT INTO chat_messages (id, debate_id, user_id, speaker, body, created_at)
+    VALUES (?, ?, NULL, 'system', ?, ?)
+  `).run(id, debateId, text, createdAt);
+
+  return listMessages(debateId).find((message) => message.id === id);
+}
+
+function getDebateTurnState(debateId) {
+  advanceExpiredDebateTurns(debateId);
+
+  const row = getDebateRow(debateId);
+
+  if (!row) {
+    return null;
+  }
+
+  const participants = listDebateParticipants(debateId);
+  const participantCount = Math.max(participants.length, 1);
+  const phase = getPhaseByTurnIndex(row.turn_index, participantCount);
+  const current = phase ? participants[row.turn_index % participantCount] : null;
+  const remainingMs = row.turn_deadline_at ? new Date(row.turn_deadline_at).getTime() - Date.now() : 0;
+
+  return {
+    phaseKey: row.phase_key,
+    phaseLabel: phase?.label || "Finished",
+    status: row.status,
+    turnIndex: row.turn_index,
+    totalTurns: debatePhases.length * participantCount,
+    turnUserId: current?.userId || "",
+    turnUserName: current?.name || "",
+    turnDeadlineAt: row.turn_deadline_at || "",
+    secondsRemaining: Math.max(0, Math.ceil(remainingMs / 1000)),
+    isFinished: row.status !== "active" || !phase,
+  };
+}
+
+function setDebateTurn(debateId, turnIndex, reason = "") {
+  const participants = listDebateParticipants(debateId);
+  const participantCount = Math.max(participants.length, 1);
+  const phase = getPhaseByTurnIndex(turnIndex, participantCount);
+  const updatedAt = nowIso();
+
+  if (!phase) {
+    db.prepare(`
+      UPDATE debates
+      SET status = 'closed',
+          phase_key = 'finished',
+          turn_index = ?,
+          turn_deadline_at = NULL,
+          updated_at = ?
+      WHERE id = ?
+    `).run(turnIndex, updatedAt, debateId);
+    createRawSystemMessage(debateId, "Debate finished. Review the transcript and notes.");
+    return getDebateTurnState(debateId);
+  }
+
+  const current = participants[turnIndex % participantCount];
+  const deadline = addSecondsIso(updatedAt, phase.durationSeconds);
+
+  db.prepare(`
+    UPDATE debates
+    SET status = 'active',
+        phase_key = ?,
+        turn_index = ?,
+        turn_deadline_at = ?,
+        updated_at = ?
+    WHERE id = ?
+  `).run(phase.key, turnIndex, deadline, updatedAt, debateId);
+
+  if (reason) {
+    createRawSystemMessage(
+      debateId,
+      `${reason} ${phase.label}: ${current?.name || "Next speaker"} is up.`,
+    );
+  }
+
+  return getDebateTurnState(debateId);
+}
+
+function advanceDebateTurn(debateId, reason = "Turn advanced.") {
+  const row = getDebateRow(debateId);
+
+  if (!row || row.status !== "active") {
+    return getDebateTurnState(debateId);
+  }
+
+  return setDebateTurn(debateId, row.turn_index + 1, reason);
+}
+
+function advanceExpiredDebateTurns(debateId) {
+  let row = getDebateRow(debateId);
+  let guard = 0;
+  let changed = false;
+
+  while (row?.status === "active" && row.turn_deadline_at && new Date(row.turn_deadline_at).getTime() <= Date.now()) {
+    setDebateTurn(debateId, row.turn_index + 1, "Timer expired.");
+    row = getDebateRow(debateId);
+    guard += 1;
+    changed = true;
+
+    if (guard > debatePhases.length * 2 + 2) {
+      break;
+    }
+  }
+
+  return changed;
+}
+
 function listDebatesForUser(userId) {
   const debateRows = db
     .prepare(`
       SELECT d.id,
              d.topic_title,
              d.status,
+             d.phase_key,
+             d.turn_index,
+             d.turn_deadline_at,
              d.updated_at,
              p.stance,
              p.detail
@@ -423,15 +576,20 @@ function listDebatesForUser(userId) {
       ORDER BY d.updated_at DESC
     `)
     .all(userId)
-    .map((row) => ({
-      id: row.id,
-      topicTitle: row.topic_title,
-      status: row.status,
-      stance: row.stance,
-      detail: row.detail,
-      participants: listDebateParticipants(row.id),
-      updatedAt: row.updated_at,
-    }));
+    .map((row) => {
+      const turnState = getDebateTurnState(row.id);
+
+      return {
+        id: row.id,
+        topicTitle: row.topic_title,
+        status: turnState?.status || row.status,
+        stance: row.stance,
+        detail: row.detail,
+        participants: listDebateParticipants(row.id),
+        turnState,
+        updatedAt: row.updated_at,
+      };
+    });
   const requestRows = db
     .prepare(`
       SELECT id, topic_title, stance, updated_at
@@ -694,9 +852,17 @@ function createActiveDebateFromProposal(proposal) {
 
   db.prepare(`
     INSERT INTO debates (
-      id, proposal_id, topic_id, topic_title, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'active', ?, ?)
-  `).run(debateId, proposal.id, proposal.topicId, proposal.topicTitle, createdAt, createdAt);
+      id, proposal_id, topic_id, topic_title, status, phase_key, turn_index, turn_deadline_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'active', 'opening', 0, ?, ?, ?)
+  `).run(
+    debateId,
+    proposal.id,
+    proposal.topicId,
+    proposal.topicTitle,
+    addSecondsIso(createdAt, debatePhases[0].durationSeconds),
+    createdAt,
+    createdAt,
+  );
 
   const insertParticipant = db.prepare(`
     INSERT INTO debate_participants (debate_id, user_id, stance, detail)
@@ -717,7 +883,7 @@ function createActiveDebateFromProposal(proposal) {
     debateId,
     userId: null,
     speaker: "system",
-    text: "Debate started. Keep arguments focused, civil, and evidence-based.",
+    text: `Debate started. Opening statement: ${getUserName(proposal.users[0].userId)} is up.`,
   });
 
   return debateId;
@@ -816,6 +982,23 @@ function createMessage({ debateId, userId = null, speaker, text }) {
     throw error;
   }
 
+  if (userId) {
+    advanceExpiredDebateTurns(debateId);
+    const turnState = getDebateTurnState(debateId);
+
+    if (turnState?.isFinished) {
+      const error = new Error("This debate is finished.");
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (turnState?.turnUserId && turnState.turnUserId !== userId) {
+      const error = new Error(`It is ${turnState.turnUserName}'s turn.`);
+      error.statusCode = 409;
+      throw error;
+    }
+  }
+
   const body = String(text || "").trim();
 
   if (!body) {
@@ -832,7 +1015,13 @@ function createMessage({ debateId, userId = null, speaker, text }) {
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(id, debateId, userId, speaker, body, createdAt);
 
-  return listMessages(debateId).find((message) => message.id === id);
+  const message = listMessages(debateId).find((candidate) => candidate.id === id);
+
+  if (userId) {
+    advanceDebateTurn(debateId, `${getUserName(userId)} submitted.`);
+  }
+
+  return message;
 }
 
 function listDebateParticipantIds(debateId) {
@@ -907,6 +1096,7 @@ function getStatus() {
 initDatabase();
 seedUsers();
 migrateLegacyPasswords();
+migrateLegacyDebateTurns();
 
 module.exports = {
   createAnnotation,
@@ -921,6 +1111,7 @@ module.exports = {
   listDebateParticipantIds,
   listDebateParticipants,
   getStatus,
+  getDebateTurnState,
   getUserByCredentials,
   getUserById,
   getUserBySession,
