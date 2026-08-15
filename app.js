@@ -7,6 +7,7 @@ const surveyView = document.querySelector("#survey-view");
 const debateView = document.querySelector("#debate-view");
 const roomView = document.querySelector("#room-view");
 const profileView = document.querySelector("#profile-view");
+const researchView = document.querySelector("#research-view");
 const nameField = document.querySelector("#name-field");
 const loginOptions = document.querySelector("#login-options");
 const formKicker = document.querySelector("#form-kicker");
@@ -44,6 +45,11 @@ const topicSearch = document.querySelector("#topic-search");
 const searchSuggestions = document.querySelector("#search-suggestions");
 const backHomeButton = document.querySelector("#back-home");
 const roomHomeButton = document.querySelector("#room-home");
+const researchBackButton = document.querySelector("#research-back");
+const researchHeaderActions = document.querySelector("#research-header-actions");
+const researchTitle = document.querySelector("#research-title");
+const researchClaim = document.querySelector("#research-claim");
+const researchContent = document.querySelector("#research-content");
 const roomHeaderActions = document.querySelector("#room-header-actions");
 const roomTitle = document.querySelector("#room-title");
 const roomDetail = document.querySelector("#room-detail");
@@ -162,6 +168,8 @@ let pendingMatch = null;
 let activeHeaderPanel = "";
 let debateFilters = new Set();
 let activeRoomDebateId = "";
+let activeResearchDebateId = "";
+let activeResearchClaimKey = "";
 let activeCopilotTab = "notes";
 let activeCopilotAnalysis = null;
 let activeDebateRecap = null;
@@ -1755,6 +1763,8 @@ function leaveActiveRoom() {
   }
 
   activeDebateState = null;
+  activeResearchDebateId = "";
+  activeResearchClaimKey = "";
   activeCopilotAnalysis = null;
   activeDebateRecap = null;
   copilotLoading = false;
@@ -1783,6 +1793,7 @@ async function showApp(user) {
   debateView.hidden = true;
   roomView.hidden = true;
   profileView.hidden = true;
+  researchView.hidden = true;
   appView.hidden = false;
   document.title = "Debate.it | Home";
 }
@@ -1810,6 +1821,7 @@ function showAuth() {
   debateView.hidden = true;
   roomView.hidden = true;
   profileView.hidden = true;
+  researchView.hidden = true;
   appView.hidden = true;
   document.title = "Debate.it | Login";
 }
@@ -1823,6 +1835,7 @@ function showSurvey(user) {
   debateView.hidden = true;
   roomView.hidden = true;
   profileView.hidden = true;
+  researchView.hidden = true;
   surveyView.hidden = false;
   document.title = "Debate.it | Survey";
 }
@@ -1845,6 +1858,7 @@ function showProfilePage() {
   surveyView.hidden = true;
   debateView.hidden = true;
   roomView.hidden = true;
+  researchView.hidden = true;
   profileView.hidden = false;
   setNotificationVisibility(true);
   document.title = "Debate.it | Profile";
@@ -1875,6 +1889,7 @@ function showDebateTopic(topic, prompt) {
   surveyView.hidden = true;
   roomView.hidden = true;
   profileView.hidden = true;
+  researchView.hidden = true;
   debateView.hidden = false;
   setNotificationVisibility(true);
   document.title = "Debate.it | Debate";
@@ -1913,6 +1928,7 @@ async function showDebateRoom(debateId) {
   surveyView.hidden = true;
   debateView.hidden = true;
   profileView.hidden = true;
+  researchView.hidden = true;
   roomView.hidden = false;
   setNotificationVisibility(true);
   document.title = "Debate.it | Room";
@@ -2691,7 +2707,7 @@ function renderFactReviewEditor(fact, claimKey, review) {
   factCheckButton.className = "secondary-button compact-button";
   factCheckButton.type = "button";
   factCheckButton.disabled = isChecking;
-  factCheckButton.textContent = isChecking ? "Checking..." : trustedFactCheck ? "Refresh fact-check" : "Fact-check claim";
+  factCheckButton.textContent = isChecking ? "Researching..." : trustedFactCheck ? "Refresh research" : "Research claim";
 
   statuses.forEach((status) => {
     const button = document.createElement("button");
@@ -2732,7 +2748,7 @@ function renderFactReviewEditor(fact, claimKey, review) {
   panel.append(actions, source, note, save, factCheckButton);
 
   if (trustedFactCheck) {
-    panel.append(renderTrustedFactCheck(trustedFactCheck));
+    panel.append(renderTrustedFactCheck(trustedFactCheck, { claimKey, fact }));
   }
 
   if (checkError) {
@@ -2749,13 +2765,14 @@ function renderFactReviewEditor(fact, claimKey, review) {
   return panel;
 }
 
-function renderTrustedFactCheck(factCheck) {
+function renderTrustedFactCheck(factCheck, { claimKey = "", fact = null } = {}) {
   const card = document.createElement("div");
   const header = document.createElement("div");
   const verdict = document.createElement("strong");
   const confidence = document.createElement("span");
   const presentation = factCheck.presentation || {};
   const interpretation = document.createElement("p");
+  const openResearch = document.createElement("button");
 
   card.className = "trusted-fact-check";
   header.className = "trusted-fact-header";
@@ -2766,100 +2783,197 @@ function renderTrustedFactCheck(factCheck) {
   header.append(verdict, confidence);
   card.append(header, interpretation);
 
-  if (presentation.nextStep || presentation.caveat) {
+  if (presentation.nextStep) {
     const guidance = document.createElement("p");
     guidance.className = "fact-next-step";
-    guidance.textContent = [presentation.nextStep, presentation.caveat].filter(Boolean).join(" ");
+    guidance.textContent = presentation.nextStep;
     card.append(guidance);
   }
 
-  if (factCheck.stats?.length) {
-    const stats = document.createElement("ul");
-    stats.className = "fact-stats";
-    factCheck.stats.slice(0, 4).forEach((stat) => {
-      const item = document.createElement("li");
-      item.textContent = typeof stat === "string" ? stat : stat.text || stat.value || JSON.stringify(stat);
-      stats.append(item);
-    });
-    card.append(stats);
+  openResearch.className = "secondary-button compact-button";
+  openResearch.type = "button";
+  openResearch.textContent = "Open research";
+  openResearch.addEventListener("click", (event) => {
+    event.stopPropagation();
+    showFactResearchPage({ claimKey, fact });
+  });
+  card.append(openResearch);
+
+  return card;
+}
+
+function createResearchSection(title, children = []) {
+  const section = document.createElement("section");
+  const heading = document.createElement("h2");
+
+  section.className = "research-section";
+  heading.textContent = title;
+  section.append(heading, ...children);
+  return section;
+}
+
+function createResearchParagraph(text, className = "") {
+  const paragraph = document.createElement("p");
+
+  paragraph.textContent = text || "";
+  if (className) {
+    paragraph.className = className;
   }
+  return paragraph;
+}
 
-  const evidence = (factCheck.evidence || []).filter((source) => {
-    const title = String(source.title || "").trim();
+function renderResearchSources(factCheck) {
+  const sources = factCheck.sourceEvaluation?.rankedSources?.length
+    ? factCheck.sourceEvaluation.rankedSources
+    : factCheck.evidence || [];
+  const grid = document.createElement("div");
 
-    return title && !/^untitled\b/i.test(title);
+  grid.className = "research-source-grid";
+
+  sources.slice(0, 10).forEach((source) => {
+    const card = document.createElement("article");
+    const meta = document.createElement("span");
+    const title = document.createElement("a");
+    const summary = document.createElement("p");
+    const reason = document.createElement("p");
+
+    card.className = "research-source-card";
+    meta.textContent = [source.provider || "Source", source.strength || source.sourceType || ""].filter(Boolean).join(" | ");
+    title.href = source.url || "#";
+    title.target = "_blank";
+    title.rel = "noreferrer";
+    title.textContent = source.title || "Source";
+    summary.textContent = source.whatItSays || "No source summary available.";
+    reason.className = "research-source-reason";
+    reason.textContent = source.reason || source.relevance || "";
+    card.append(meta, title, summary);
+
+    if (reason.textContent) {
+      card.append(reason);
+    }
+
+    grid.append(card);
   });
 
-  if (evidence.length) {
-    const evidenceList = document.createElement("div");
-    evidenceList.className = "evidence-list";
-    evidence.slice(0, 5).forEach((source) => {
-      const link = document.createElement("a");
-      const note = document.createElement("span");
+  return grid;
+}
 
-      link.href = source.url || "#";
-      link.target = "_blank";
-      link.rel = "noreferrer";
-      link.textContent = `${source.provider || "Source"}: ${source.title}`;
-      note.textContent = source.whatItSays || source.relevance || "";
-      evidenceList.append(link, note);
-    });
-    card.append(evidenceList);
+function renderResearchTrail(factCheck) {
+  const trail = document.createElement("div");
+
+  trail.className = "research-agent-list";
+
+  (factCheck.researchTrail || []).forEach((step) => {
+    const item = document.createElement("article");
+    const heading = document.createElement("strong");
+    const summary = document.createElement("p");
+    const details = document.createElement("span");
+
+    item.className = "research-agent-card";
+    heading.textContent = step.agent || "Agent";
+    summary.textContent = step.summary || "";
+    details.textContent = step.details || "";
+    item.append(heading, summary);
+
+    if (details.textContent) {
+      item.append(details);
+    }
+
+    trail.append(item);
+  });
+
+  return trail;
+}
+
+function showFactResearchPage({ claimKey = "", fact = null } = {}) {
+  const debateId = activeRoomDebateId || activeResearchDebateId;
+  const factCheck = trustedFactCheckCache.get(claimKey);
+
+  if (!debateId || !factCheck) {
+    return;
   }
 
-  if (factCheck.sourceEvaluation?.rankedSources?.length) {
-    const ranked = document.createElement("div");
-    const title = document.createElement("strong");
+  const verdict = factCheck.verdict || "Not enough evidence";
+  const presentation = factCheck.presentation || {};
+  const classification = factCheck.claimClassification || {};
+  const sourceEvaluation = factCheck.sourceEvaluation || {};
+  const stats = Array.isArray(factCheck.stats) ? factCheck.stats : [];
+  const gaps = [
+    ...(Array.isArray(sourceEvaluation.searchGaps) ? sourceEvaluation.searchGaps : []),
+    ...(Array.isArray(sourceEvaluation.weaknesses) ? sourceEvaluation.weaknesses : []),
+  ];
 
-    ranked.className = "ranked-sources";
-    title.textContent = "Ranked sources";
-    ranked.append(title);
+  activeResearchDebateId = debateId;
+  activeResearchClaimKey = claimKey;
+  mountNotificationCenter(researchHeaderActions);
+  mountProfileButton(researchHeaderActions);
+  updateHeaderProfile();
+  researchTitle.textContent = presentation.headline || `${verdict} fact-check`;
+  researchClaim.textContent = factCheck.claim || fact?.claim || "Selected claim";
+  researchContent.replaceChildren();
 
-    factCheck.sourceEvaluation.rankedSources.slice(0, 4).forEach((source) => {
-      const item = document.createElement("a");
-      const strength = document.createElement("span");
+  const verdictCard = document.createElement("section");
+  const verdictHead = document.createElement("div");
+  const verdictLabel = document.createElement("strong");
+  const confidence = document.createElement("span");
 
-      item.href = source.url || "#";
-      item.target = "_blank";
-      item.rel = "noreferrer";
-      item.textContent = `${source.provider || "Source"}: ${source.title}`;
-      strength.textContent = source.strength || "Useful context";
-      item.append(strength);
-      ranked.append(item);
+  verdictCard.className = "research-verdict";
+  verdictHead.className = "research-verdict-head";
+  verdictLabel.textContent = verdict;
+  verdictLabel.dataset.verdict = String(verdict).toLowerCase().replace(/[^a-z]+/g, "-");
+  confidence.textContent = `${factCheck.confidence || "Low"} confidence`;
+  verdictHead.append(verdictLabel, confidence);
+  verdictCard.append(
+    verdictHead,
+    createResearchParagraph(presentation.summary || factCheck.interpretation || "No interpretation available."),
+    createResearchParagraph(presentation.caveat || factCheck.limitations || "", "research-caveat"),
+  );
+  researchContent.append(verdictCard);
+
+  researchContent.append(createResearchSection("Claim classification", [
+    createResearchParagraph(`${classification.claimType || "general"} claim | ${classification.checkability || "Medium"} checkability`),
+    createResearchParagraph(classification.reasoning || classification.sourceStrategy || ""),
+  ]));
+
+  if (stats.length) {
+    const list = document.createElement("ul");
+    list.className = "research-stat-list";
+    stats.slice(0, 6).forEach((stat) => {
+      const item = document.createElement("li");
+      item.textContent = typeof stat === "string" ? stat : stat.text || stat.value || JSON.stringify(stat);
+      list.append(item);
     });
-    card.append(ranked);
+    researchContent.append(createResearchSection("Stats found", [list]));
+  }
+
+  researchContent.append(createResearchSection("Sources and summaries", [renderResearchSources(factCheck)]));
+
+  if (gaps.length) {
+    const list = document.createElement("ul");
+    list.className = "research-gap-list";
+    gaps.slice(0, 5).forEach((gap) => {
+      const item = document.createElement("li");
+      item.textContent = gap;
+      list.append(item);
+    });
+    researchContent.append(createResearchSection("Why confidence is limited", [list]));
   }
 
   if (factCheck.researchTrail?.length) {
-    const trail = document.createElement("div");
-    const title = document.createElement("strong");
-
-    trail.className = "agent-trail";
-    title.textContent = "Research agents";
-    trail.append(title);
-
-    factCheck.researchTrail.forEach((step) => {
-      const item = document.createElement("div");
-      const agent = document.createElement("span");
-      const summary = document.createElement("p");
-
-      item.className = "agent-step";
-      agent.textContent = step.agent || "Agent";
-      summary.textContent = step.summary || step.details || "";
-      item.append(agent, summary);
-      trail.append(item);
-    });
-    card.append(trail);
+    researchContent.append(createResearchSection("Agent reasoning", [renderResearchTrail(factCheck)]));
   }
 
-  if (factCheck.limitations) {
-    const limitations = document.createElement("p");
-    limitations.className = "fact-limitations";
-    limitations.textContent = factCheck.limitations;
-    card.append(limitations);
-  }
-
-  return card;
+  notificationPanel.hidden = true;
+  profileMenu.hidden = true;
+  authView.hidden = true;
+  appView.hidden = true;
+  surveyView.hidden = true;
+  debateView.hidden = true;
+  profileView.hidden = true;
+  roomView.hidden = true;
+  researchView.hidden = false;
+  setNotificationVisibility(true);
+  document.title = "Debate.it | Fact Research";
 }
 
 function renderCitationPlan(plan) {
@@ -2925,6 +3039,7 @@ async function loadTrustedFactCheck({ fact, claimKey, sourceType }) {
       }),
     });
     trustedFactCheckCache.set(claimKey, factCheck);
+    showFactResearchPage({ claimKey, fact });
   } catch (error) {
     trustedFactCheckErrors.set(claimKey, error.message || "Fact-check failed.");
   } finally {
@@ -3465,6 +3580,16 @@ backHomeButton.addEventListener("click", () => {
 
 roomHomeButton.addEventListener("click", () => {
   if (activeUser) {
+    showApp(activeUser);
+  }
+});
+
+researchBackButton.addEventListener("click", () => {
+  const debateId = activeResearchDebateId || activeRoomDebateId;
+
+  if (debateId) {
+    showDebateRoom(debateId);
+  } else if (activeUser) {
     showApp(activeUser);
   }
 });

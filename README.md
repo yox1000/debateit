@@ -119,9 +119,10 @@ This runs a chained research workflow:
    source bundle.
 5. Presentation Agent turns the result into a concise Facts tab summary.
 
-The UI shows verdict, confidence, interpretation, next step, stats when
-available, ranked sources, the research-agent trail, limitations, and source
-links.
+The Facts tab keeps a compact verdict in the debate room. Full source
+summaries, ranked sources, confidence reasoning, limitations, and the
+research-agent trail open in a dedicated fact-check research page so the chat
+does not get crowded.
 
 ## Database API
 

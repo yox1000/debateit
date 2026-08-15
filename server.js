@@ -48,7 +48,7 @@ const topicCatalogVersion = crypto.createHash("sha1").update(JSON.stringify(topi
 const sessionCookieName = "debateit_session";
 const promptsDir = path.join(__dirname, "prompts");
 const aiRepairEnabled = process.env.AI_REPAIR_ENABLED !== "false";
-const factCheckSourceVersion = "multi-agent-v1";
+const factCheckSourceVersion = "research-page-v2";
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -835,16 +835,16 @@ function validateCitationPlan(plan) {
 function inferClaimType({ claim = "", sourceType = "", debateTopic = "" }) {
   const text = `${claim} ${sourceType} ${debateTopic}`.toLowerCase();
 
+  if (/\b(percent|percentage|rate|statistics|data|survey|poll|increase|decrease|more than|less than|majority|many|number of|how many|solved crimes|crimes solved)\b/.test(text)) {
+    return "statistics";
+  }
+
   if (isLegalClaim({ claim, sourceType, debateTopic })) {
     return "legal";
   }
 
   if (/\b(study|studies|research|scientific|clinical|experiment|peer-reviewed|biology|medicine|health|climate)\b/.test(text)) {
     return "science";
-  }
-
-  if (/\b(percent|percentage|rate|statistics|data|survey|poll|increase|decrease|more than|less than|majority)\b/.test(text)) {
-    return "statistics";
   }
 
   if (/\b(history|historical|war|ancient|century|founded|invented)\b/.test(text)) {
@@ -980,7 +980,7 @@ async function searchOpenAlexSources(query) {
 function isLegalClaim({ claim = "", sourceType = "", debateTopic = "" }) {
   const text = `${claim} ${sourceType} ${debateTopic}`.toLowerCase();
 
-  return /\b(fourth amendment|first amendment|constitutional|constitution|unconstitutional|legal|law|court|case law|supreme court|warrant|seizure|search and seizure|privacy right|facial recognition)\b/.test(text);
+  return /\b(fourth amendment|first amendment|constitutional|constitution|unconstitutional|legal|law|court|case law|supreme court|warrant|seizure|search and seizure|privacy right)\b/.test(text);
 }
 
 function getLegalQueries({ claim = "", debateTopic = "" }) {
@@ -1107,6 +1107,38 @@ async function searchLegalReferenceSources({ claim = "", debateTopic = "" }) {
   return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
 }
 
+async function searchOfficialReferenceSources({ claim = "", debateTopic = "" }) {
+  const text = `${claim} ${debateTopic}`.toLowerCase();
+  const references = [];
+
+  if (text.includes("facial recognition")) {
+    references.push(
+      {
+        provider: "GAO",
+        sourceType: "Government report",
+        url: "https://www.gao.gov/products/gao-21-518",
+        trustReason: "U.S. Government Accountability Office report on federal law enforcement facial recognition use and risks.",
+      },
+      {
+        provider: "GAO",
+        sourceType: "Government report",
+        url: "https://www.gao.gov/products/gao-21-526",
+        trustReason: "U.S. Government Accountability Office report on current and planned federal facial recognition uses.",
+      },
+      {
+        provider: "NIST",
+        sourceType: "Government technical report",
+        url: "https://www.nist.gov/programs-projects/face-recognition-vendor-test-frvt",
+        trustReason: "U.S. government technical testing program for facial recognition systems.",
+      },
+    );
+  }
+
+  const results = await Promise.allSettled(references.map((reference) => createReferenceSource(reference)));
+
+  return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+}
+
 function dedupeSources(sources = []) {
   const seen = new Set();
 
@@ -1126,7 +1158,7 @@ function dedupeSources(sources = []) {
 
 async function searchTrustedSources({ claim, debateTopic = "", sourceType = "", classification = null }) {
   const query = [claim, debateTopic].filter(Boolean).join(" ");
-  const legalClaim = classification?.claimType === "legal" || isLegalClaim({ claim, sourceType, debateTopic });
+  const legalClaim = classification ? classification.claimType === "legal" : isLegalClaim({ claim, sourceType, debateTopic });
   const classifierQueries = Array.isArray(classification?.searchQueries) ? classification.searchQueries : [];
   const legalQueries = legalClaim
     ? [...new Set([...classifierQueries, ...getLegalQueries({ claim, debateTopic })])].slice(0, 5)
@@ -1134,6 +1166,7 @@ async function searchTrustedSources({ claim, debateTopic = "", sourceType = "", 
   const generalQueries = classifierQueries.length ? classifierQueries.slice(0, 2) : [query];
   const legalSearches = legalQueries.map((legalQuery) => searchCourtListenerSources(legalQuery));
   const referenceSearches = legalClaim ? [searchLegalReferenceSources({ claim, debateTopic })] : [];
+  const officialSearches = [searchOfficialReferenceSources({ claim, debateTopic })];
   const generalSearches = generalQueries.flatMap((searchQuery) => [
     searchWikipediaSources(searchQuery),
     searchCrossrefSources(searchQuery),
@@ -1142,6 +1175,7 @@ async function searchTrustedSources({ claim, debateTopic = "", sourceType = "", 
   const searches = await Promise.allSettled([
     ...legalSearches,
     ...referenceSearches,
+    ...officialSearches,
     ...generalSearches,
   ]);
   const sources = searches
