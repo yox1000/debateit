@@ -73,6 +73,7 @@ Current prompt families:
 - `copilot.cross-question`
 - `copilot.closing`
 - `recap`
+- `fact-check`
 - `citation-search`
 - `repair-json`
 
@@ -100,6 +101,15 @@ Citation planning is available through:
 This creates search queries and source targets for a claim. It does not pretend
 to verify live citations until a real external search provider is connected.
 
+Trusted-source fact checks are available through:
+
+- `POST /api/debates/:debateId/fact-check-claim`
+
+This searches public trusted-source APIs, currently Wikipedia, Crossref, and
+OpenAlex, then asks DeepSeek to interpret the claim using only the gathered
+source bundle. The UI shows verdict, confidence, interpretation, stats when
+available, limitations, and links to the source results.
+
 ## Database API
 
 Initial SQLite-backed endpoints:
@@ -125,6 +135,7 @@ Initial SQLite-backed endpoints:
 - `POST /api/debates/:debateId/copilot`
 - `POST /api/debates/:debateId/recap`
 - `POST /api/debates/:debateId/citation-plan`
+- `POST /api/debates/:debateId/fact-check-claim`
 
 The frontend now writes auth, survey profile, matchmaking, debates, messages,
 and annotations through the SQLite API. The browser keeps only a lightweight

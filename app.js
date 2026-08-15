@@ -151,6 +151,9 @@ let messageCache = new Map();
 let annotationCache = new Map();
 let factCheckReviewCache = new Map();
 let citationPlanCache = new Map();
+let trustedFactCheckCache = new Map();
+let trustedFactCheckLoadingKeys = new Set();
+let trustedFactCheckErrors = new Map();
 let debateRecapCache = new Map();
 let unreadProposalIds = new Set();
 let activeTopic = null;
@@ -1795,6 +1798,9 @@ function showAuth() {
   annotationCache = new Map();
   factCheckReviewCache = new Map();
   citationPlanCache = new Map();
+  trustedFactCheckCache = new Map();
+  trustedFactCheckLoadingKeys = new Set();
+  trustedFactCheckErrors = new Map();
   debateRecapCache = new Map();
   unreadProposalIds.clear();
   profileMenu.hidden = true;
@@ -2646,9 +2652,12 @@ function renderFactReviewEditor(fact, claimKey, review) {
   const note = document.createElement("textarea");
   const source = document.createElement("input");
   const save = document.createElement("button");
-  const findSources = document.createElement("button");
+  const factCheckButton = document.createElement("button");
   const statuses = ["Needs source", "Likely supported", "Questionable", "Irrelevant"];
   const citationPlan = citationPlanCache.get(claimKey);
+  const trustedFactCheck = trustedFactCheckCache.get(claimKey);
+  const isChecking = trustedFactCheckLoadingKeys.has(claimKey);
+  const checkError = trustedFactCheckErrors.get(claimKey);
 
   panel.className = "fact-review-panel";
   actions.className = "fact-review-actions";
@@ -2661,9 +2670,10 @@ function renderFactReviewEditor(fact, claimKey, review) {
   save.className = "secondary-button compact-button";
   save.type = "button";
   save.textContent = "Save note";
-  findSources.className = "secondary-button compact-button";
-  findSources.type = "button";
-  findSources.textContent = citationPlan ? "Refresh sources" : "Find source targets";
+  factCheckButton.className = "secondary-button compact-button";
+  factCheckButton.type = "button";
+  factCheckButton.disabled = isChecking;
+  factCheckButton.textContent = isChecking ? "Checking..." : trustedFactCheck ? "Refresh fact-check" : "Fact-check claim";
 
   statuses.forEach((status) => {
     const button = document.createElement("button");
@@ -2696,18 +2706,83 @@ function renderFactReviewEditor(fact, claimKey, review) {
     });
   });
 
-  findSources.addEventListener("click", (event) => {
+  factCheckButton.addEventListener("click", (event) => {
     event.stopPropagation();
-    loadCitationPlan({ fact, claimKey, sourceType: source.value });
+    loadTrustedFactCheck({ fact, claimKey, sourceType: source.value });
   });
 
-  panel.append(actions, source, note, save, findSources);
+  panel.append(actions, source, note, save, factCheckButton);
+
+  if (trustedFactCheck) {
+    panel.append(renderTrustedFactCheck(trustedFactCheck));
+  }
+
+  if (checkError) {
+    const error = document.createElement("p");
+    error.className = "fact-check-error";
+    error.textContent = checkError;
+    panel.append(error);
+  }
 
   if (citationPlan) {
     panel.append(renderCitationPlan(citationPlan));
   }
 
   return panel;
+}
+
+function renderTrustedFactCheck(factCheck) {
+  const card = document.createElement("div");
+  const header = document.createElement("div");
+  const verdict = document.createElement("strong");
+  const confidence = document.createElement("span");
+  const interpretation = document.createElement("p");
+
+  card.className = "trusted-fact-check";
+  header.className = "trusted-fact-header";
+  verdict.textContent = factCheck.verdict || "Not enough evidence";
+  verdict.dataset.verdict = String(factCheck.verdict || "").toLowerCase().replace(/[^a-z]+/g, "-");
+  confidence.textContent = `${factCheck.confidence || "Low"} confidence`;
+  interpretation.textContent = factCheck.interpretation || "No interpretation available.";
+  header.append(verdict, confidence);
+  card.append(header, interpretation);
+
+  if (factCheck.stats?.length) {
+    const stats = document.createElement("ul");
+    stats.className = "fact-stats";
+    factCheck.stats.slice(0, 4).forEach((stat) => {
+      const item = document.createElement("li");
+      item.textContent = typeof stat === "string" ? stat : stat.text || stat.value || JSON.stringify(stat);
+      stats.append(item);
+    });
+    card.append(stats);
+  }
+
+  if (factCheck.evidence?.length) {
+    const evidenceList = document.createElement("div");
+    evidenceList.className = "evidence-list";
+    factCheck.evidence.slice(0, 5).forEach((source) => {
+      const link = document.createElement("a");
+      const note = document.createElement("span");
+
+      link.href = source.url || "#";
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = `${source.provider || "Source"}: ${source.title || "Untitled"}`;
+      note.textContent = source.whatItSays || source.relevance || "";
+      evidenceList.append(link, note);
+    });
+    card.append(evidenceList);
+  }
+
+  if (factCheck.limitations) {
+    const limitations = document.createElement("p");
+    limitations.className = "fact-limitations";
+    limitations.textContent = factCheck.limitations;
+    card.append(limitations);
+  }
+
+  return card;
 }
 
 function renderCitationPlan(plan) {
@@ -2753,6 +2828,32 @@ async function loadCitationPlan({ fact, claimKey, sourceType }) {
   });
   citationPlanCache.set(claimKey, plan);
   renderCopilot(getChatMessages(activeRoomDebateId), getLocalDebates().find((debate) => debate.id === activeRoomDebateId));
+}
+
+async function loadTrustedFactCheck({ fact, claimKey, sourceType }) {
+  if (!activeRoomDebateId) {
+    return;
+  }
+
+  trustedFactCheckLoadingKeys.add(claimKey);
+  trustedFactCheckErrors.delete(claimKey);
+  renderCopilot(getChatMessages(activeRoomDebateId), getLocalDebates().find((debate) => debate.id === activeRoomDebateId));
+
+  try {
+    const { factCheck } = await apiRequest(`/api/debates/${encodeURIComponent(activeRoomDebateId)}/fact-check-claim`, {
+      method: "POST",
+      body: JSON.stringify({
+        claim: fact.claim,
+        sourceType,
+      }),
+    });
+    trustedFactCheckCache.set(claimKey, factCheck);
+  } catch (error) {
+    trustedFactCheckErrors.set(claimKey, error.message || "Fact-check failed.");
+  } finally {
+    trustedFactCheckLoadingKeys.delete(claimKey);
+    renderCopilot(getChatMessages(activeRoomDebateId), getLocalDebates().find((debate) => debate.id === activeRoomDebateId));
+  }
 }
 
 async function saveFactReview({ fact, claimKey, status, note, sourceType }) {

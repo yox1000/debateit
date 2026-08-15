@@ -51,5 +51,21 @@
       "claim": "Studies show structured classroom phone use can improve research skills.",
       "sourceType": "Peer-reviewed study"
     }
+  },
+  {
+    "name": "trusted-fact-check",
+    "promptName": "fact-check",
+    "requiredKeys": ["source", "claim", "verdict", "confidence", "interpretation", "stats", "evidence", "limitations", "checkedAt"],
+    "input": {
+      "claim": "Studies show structured classroom phone use can improve research skills.",
+      "sources": [
+        {
+          "provider": "OpenAlex",
+          "title": "Example academic source",
+          "url": "https://example.com",
+          "snippet": "Example source text."
+        }
+      ]
+    }
   }
 ]

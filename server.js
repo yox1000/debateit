@@ -103,6 +103,56 @@ function hasRequiredKeys(value, requiredKeys = []) {
   );
 }
 
+function stripMarkup(value = "") {
+  return String(value)
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function truncate(value = "", length = 700) {
+  const text = stripMarkup(value);
+
+  return text.length > length ? `${text.slice(0, length - 3)}...` : text;
+}
+
+function getDateParts(parts) {
+  const dateParts = parts?.["date-parts"]?.[0] || [];
+
+  return dateParts.length ? dateParts.filter(Boolean).join("-") : "";
+}
+
+function decodeOpenAlexAbstract(invertedIndex) {
+  if (!invertedIndex || typeof invertedIndex !== "object") {
+    return "";
+  }
+
+  const words = [];
+
+  Object.entries(invertedIndex).forEach(([word, positions]) => {
+    (positions || []).forEach((position) => {
+      words[position] = word;
+    });
+  });
+
+  return words.filter(Boolean).join(" ");
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "Debate.it prototype fact-checker (local development)",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Source request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
 function readBody(request) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -757,6 +807,124 @@ function validateCitationPlan(plan) {
     sourceTargets: Array.isArray(plan.sourceTargets) ? plan.sourceTargets.slice(0, 6) : [],
     citationNotes: plan.citationNotes || "No citations verified yet.",
   };
+}
+
+async function searchWikipediaSources(query) {
+  const data = await fetchJson(
+    `https://en.wikipedia.org/w/rest.php/v1/search/page?q=${encodeURIComponent(query)}&limit=3`,
+  );
+
+  return (data.pages || []).map((page) => ({
+    provider: "Wikipedia",
+    sourceType: "Reference",
+    title: page.title,
+    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(page.key || page.title).replace(/%20/g, "_")}`,
+    snippet: truncate(`${page.description || ""}. ${page.excerpt || ""}`),
+    publishedAt: "",
+    trustReason: "Useful for general background; should be treated as secondary context.",
+  }));
+}
+
+async function searchCrossrefSources(query) {
+  const data = await fetchJson(
+    `https://api.crossref.org/works?query=${encodeURIComponent(query)}&rows=3`,
+  );
+
+  return (data.message?.items || []).map((item) => ({
+    provider: "Crossref",
+    sourceType: "Academic metadata",
+    title: truncate((item.title || [])[0] || "Untitled work", 180),
+    url: item.URL || (item.DOI ? `https://doi.org/${item.DOI}` : ""),
+    snippet: truncate(item.abstract || `${(item["container-title"] || [])[0] || "Scholarly work"}${item["is-referenced-by-count"] ? `, referenced by ${item["is-referenced-by-count"]} works` : ""}.`),
+    publishedAt: getDateParts(item.published) || getDateParts(item["published-print"]) || getDateParts(item["published-online"]),
+    trustReason: "Scholarly index metadata. Full text may still need review.",
+  }));
+}
+
+async function searchOpenAlexSources(query) {
+  const data = await fetchJson(
+    `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=3`,
+  );
+
+  return (data.results || []).map((item) => ({
+    provider: "OpenAlex",
+    sourceType: "Academic index",
+    title: truncate(item.display_name || "Untitled work", 180),
+    url: item.doi || item.primary_location?.landing_page_url || item.id || "",
+    snippet: truncate(decodeOpenAlexAbstract(item.abstract_inverted_index) || `${item.host_venue?.display_name || "Academic work"}${item.cited_by_count ? `, cited by ${item.cited_by_count} works` : ""}.`),
+    publishedAt: item.publication_year ? String(item.publication_year) : "",
+    trustReason: "Open academic index metadata and abstracts when available.",
+  }));
+}
+
+async function searchTrustedSources({ claim, debateTopic = "" }) {
+  const query = [claim, debateTopic].filter(Boolean).join(" ");
+  const searches = await Promise.allSettled([
+    searchWikipediaSources(query),
+    searchCrossrefSources(query),
+    searchOpenAlexSources(query),
+  ]);
+  const sources = searches
+    .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+    .filter((source) => source.title && source.url)
+    .slice(0, 8);
+
+  return sources;
+}
+
+function createLocalTrustedFactCheck({ claim, sources = [] }) {
+  return {
+    source: "local",
+    claim: String(claim || "").trim(),
+    verdict: sources.length ? "Not enough evidence" : "Not enough evidence",
+    confidence: sources.length ? "Low" : "Low",
+    interpretation: sources.length
+      ? "Trusted source search returned possible sources, but DeepSeek is unavailable to interpret them. Review the linked sources before marking the claim."
+      : "No trusted source results were found from the configured public source APIs.",
+    stats: [],
+    evidence: sources.slice(0, 5).map((source) => ({
+      title: source.title,
+      provider: source.provider,
+      url: source.url,
+      relevance: "Potentially relevant source result.",
+      whatItSays: source.snippet,
+    })),
+    limitations: "This fallback does not decide truth. It only reports available source results.",
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+function validateTrustedFactCheck(result) {
+  return {
+    source: result.source || "deepseek",
+    claim: result.claim || "",
+    verdict: result.verdict || "Not enough evidence",
+    confidence: result.confidence || "Low",
+    interpretation: result.interpretation || "No interpretation available.",
+    stats: Array.isArray(result.stats) ? result.stats.slice(0, 6) : [],
+    evidence: Array.isArray(result.evidence) ? result.evidence.slice(0, 8) : [],
+    limitations: result.limitations || "Review source links directly before relying on this fact-check.",
+    checkedAt: result.checkedAt || new Date().toISOString(),
+  };
+}
+
+async function createDeepSeekTrustedFactCheck(payload) {
+  const sources = await searchTrustedSources(payload);
+
+  return callDeepSeekJson({
+    feature: "fact-check",
+    promptName: "fact-check",
+    payload: {
+      claim: payload.claim || "",
+      debateTopic: payload.debateTopic || "",
+      sourceType: payload.sourceType || "",
+      sources,
+      sourcePolicy: "Use only these trusted source search results. If they are indirect or insufficient, say Not enough evidence.",
+    },
+    seed: payload.claim || "",
+    fallback: createLocalTrustedFactCheck({ claim: payload.claim, sources }),
+    validate: (result) => validateTrustedFactCheck({ ...result, source: deepSeekApiKey ? "deepseek" : result.source }),
+  });
 }
 
 async function createDeepSeekCitationPlan(payload) {
@@ -1440,6 +1608,7 @@ const server = http.createServer(async (request, response) => {
   const recapMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/recap$/);
   const factCheckMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/fact-checks$/);
   const citationMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/citation-plan$/);
+  const trustedFactCheckMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/fact-check-claim$/);
 
   if (request.method === "GET" && debateStateMatch) {
     const user = requireDebateParticipant(request, response, debateStateMatch[1]);
@@ -1658,6 +1827,54 @@ const server = http.createServer(async (request, response) => {
         debateTopic: debate?.topicTitle || "",
       });
       sendJson(response, 200, { plan });
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  if (request.method === "POST" && trustedFactCheckMatch) {
+    try {
+      const user = requireDebateParticipant(request, response, trustedFactCheckMatch[1]);
+
+      if (!user) {
+        return;
+      }
+
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const debate = database.getDebateContext(trustedFactCheckMatch[1]);
+      const claim = String(payload.claim || "").trim();
+
+      if (!claim) {
+        sendJson(response, 400, { error: "Claim is required." });
+        return;
+      }
+
+      const claimHash = createInputHash({
+        claim,
+        sourceType: payload.sourceType || "",
+        topic: debate?.topicTitle || "",
+      });
+      const cached = database.getAiInsight(trustedFactCheckMatch[1], "fact-check", claimHash);
+
+      if (cached?.payload) {
+        sendJson(response, 200, { factCheck: cached.payload, cached: true });
+        return;
+      }
+
+      const factCheck = await createDeepSeekTrustedFactCheck({
+        claim,
+        sourceType: payload.sourceType,
+        debateTopic: debate?.topicTitle || "",
+      });
+      database.saveAiInsight({
+        debateId: trustedFactCheckMatch[1],
+        insightType: "fact-check",
+        transcriptHash: claimHash,
+        payload: factCheck,
+      });
+      sendJson(response, 200, { factCheck, cached: false });
     } catch (error) {
       sendError(response, error);
     }
