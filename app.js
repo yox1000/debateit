@@ -1781,7 +1781,9 @@ async function showApp(user) {
   mountNotificationCenter(appHeaderActions);
   mountProfileButton(appHeaderActions);
   updateHeaderProfile(user);
-  accountName.textContent = user.name || "Debater";
+  if (accountName) {
+    accountName.textContent = user.name || "Debater";
+  }
   renderProfile(user);
   await loadTopicCatalog();
   await refreshUserState(true);
