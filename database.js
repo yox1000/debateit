@@ -208,6 +208,20 @@ function initDatabase() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS fact_check_reviews (
+      id TEXT PRIMARY KEY,
+      debate_id TEXT NOT NULL REFERENCES debates(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      claim_key TEXT NOT NULL,
+      claim TEXT NOT NULL,
+      status TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      source_type TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(debate_id, user_id, claim_key)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_match_requests_lookup
       ON match_requests(topic_id, stance, status);
     CREATE INDEX IF NOT EXISTS idx_sessions_user
@@ -220,6 +234,8 @@ function initDatabase() {
       ON annotations(debate_id, created_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_insights_lookup
       ON ai_insights(debate_id, insight_type, transcript_hash);
+    CREATE INDEX IF NOT EXISTS idx_fact_check_reviews_debate
+      ON fact_check_reviews(debate_id, user_id);
   `);
 
   ensureColumn("match_requests", "metadata_json", "TEXT NOT NULL DEFAULT '{}'");
@@ -712,6 +728,10 @@ function getUserMatchSnapshot(userId) {
     country: user?.country || "",
     interests: user?.interests || [],
     debateStyle: profile.debateStyle || "",
+    skillLevel: profile.skillLevel || "",
+    preferredPace: profile.preferredPace || "",
+    evidencePreference: profile.evidencePreference || "",
+    civilityPreference: profile.civilityPreference || "",
     matchingSignals: profile.matchingSignals || {},
   };
 }
@@ -731,6 +751,22 @@ function scoreRequestCompatibility(currentRequest, candidateRequest) {
 
   if (current.debateStyle && current.debateStyle === candidate.debateStyle) {
     score += 6;
+  }
+
+  if (current.skillLevel && current.skillLevel === candidate.skillLevel) {
+    score += 5;
+  }
+
+  if (current.preferredPace && current.preferredPace === candidate.preferredPace) {
+    score += 3;
+  }
+
+  if (current.evidencePreference && current.evidencePreference === candidate.evidencePreference) {
+    score += 4;
+  }
+
+  if (current.civilityPreference && current.civilityPreference === candidate.civilityPreference) {
+    score += 3;
   }
 
   const currentInterests = new Set(current.interests || []);
@@ -862,12 +898,102 @@ function clearDebateRuntimeData() {
     DELETE FROM chat_messages;
     DELETE FROM debate_participants;
     DELETE FROM debates;
+    DELETE FROM fact_check_reviews;
     DELETE FROM match_proposal_users;
     DELETE FROM match_proposals;
     DELETE FROM match_requests;
   `);
 
   return getStatus();
+}
+
+function toFactCheckReview(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    debateId: row.debate_id,
+    userId: row.user_id,
+    claimKey: row.claim_key,
+    claim: row.claim,
+    status: row.status,
+    note: row.note,
+    sourceType: row.source_type,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function listFactCheckReviews(debateId, userId) {
+  return db
+    .prepare(`
+      SELECT *
+      FROM fact_check_reviews
+      WHERE debate_id = ? AND user_id = ?
+      ORDER BY updated_at DESC
+    `)
+    .all(debateId, userId)
+    .map(toFactCheckReview);
+}
+
+function upsertFactCheckReview({ debateId, userId, claimKey, claim, status, note = "", sourceType = "" }) {
+  if (!isDebateParticipant(debateId, userId)) {
+    const error = new Error("User is not part of this debate.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const safeStatus = String(status || "Needs source").trim();
+  const safeClaimKey = String(claimKey || "").trim();
+  const safeClaim = String(claim || "").trim();
+
+  if (!safeClaimKey || !safeClaim) {
+    const error = new Error("Claim key and claim are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const existing = db
+    .prepare(`
+      SELECT id, created_at
+      FROM fact_check_reviews
+      WHERE debate_id = ? AND user_id = ? AND claim_key = ?
+    `)
+    .get(debateId, userId, safeClaimKey);
+  const updatedAt = nowIso();
+  const id = existing?.id || createId("fact");
+  const createdAt = existing?.created_at || updatedAt;
+
+  db.prepare(`
+    INSERT INTO fact_check_reviews (
+      id, debate_id, user_id, claim_key, claim, status, note, source_type, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(debate_id, user_id, claim_key) DO UPDATE SET
+      claim = excluded.claim,
+      status = excluded.status,
+      note = excluded.note,
+      source_type = excluded.source_type,
+      updated_at = excluded.updated_at
+  `).run(
+    id,
+    debateId,
+    userId,
+    safeClaimKey,
+    safeClaim,
+    safeStatus,
+    String(note || "").trim(),
+    String(sourceType || "").trim(),
+    createdAt,
+    updatedAt,
+  );
+
+  return toFactCheckReview(
+    db
+      .prepare("SELECT * FROM fact_check_reviews WHERE debate_id = ? AND user_id = ? AND claim_key = ?")
+      .get(debateId, userId, safeClaimKey),
+  );
 }
 
 function createActiveDebateFromProposal(proposal) {
@@ -1172,6 +1298,7 @@ module.exports = {
   deleteSession,
   listDebateParticipantIds,
   listDebateParticipants,
+  listFactCheckReviews,
   getStatus,
   getAiInsight,
   getDebateContext,
@@ -1187,4 +1314,5 @@ module.exports = {
   rejectProposal,
   saveAiInsight,
   updateUserProfile,
+  upsertFactCheckReview,
 };

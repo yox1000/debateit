@@ -193,6 +193,10 @@ function createMockProfile({ selectedTopics = [], debateBio = "" }) {
       prefers: ["clear time limits", "evidence-based arguments", "civil rebuttals"],
       avoids: [],
     },
+    skillLevel: "Casual",
+    preferredPace: "Standard",
+    evidencePreference: "Balanced",
+    civilityPreference: "Strict civility",
   };
 }
 
@@ -283,13 +287,14 @@ async function createDeepSeekProfile(payload) {
         {
           role: "system",
           content:
-            "You create compact debate-matching profiles. Respond only with valid JSON using these keys: source, topics, debateStyle, summary, suggestedTopics, matchingSignals. matchingSignals must include difficulty, prefers, and avoids.",
+            "You create compact debate-matching profiles. Respond only with valid JSON using these keys: source, topics, debateStyle, summary, suggestedTopics, matchingSignals, skillLevel, preferredPace, evidencePreference, civilityPreference. matchingSignals must include difficulty, prefers, and avoids. Keep every field useful for matching two people into a civil 1v1 debate.",
         },
         {
           role: "user",
           content: JSON.stringify({
             selectedTopics: payload.selectedTopics || [],
             debateBio: payload.debateBio || "",
+            profileSignals: payload.profileSignals || {},
           }),
         },
       ],
@@ -338,7 +343,7 @@ async function createDeepSeekMatches(payload) {
         {
           role: "system",
           content:
-            "You are Debate.it's topic matching engine. Rank a candidate topic catalog against a user's debate-matching profile. Use shared categories, tags, style fit, stated preferences, and avoid signals. Prefer topics likely to produce specific, civil, balanced 1v1 debates. Return only valid JSON with keys: source and matches. matches must be an array of exactly the requested limit. Each match must include topicId, title, category, score, reason, and stancePrompt. score must be an integer from 1 to 100. reason must be one concise sentence. stancePrompt must invite the user to choose a side without deciding for them.",
+            "You are Debate.it's topic matching engine. Rank a candidate topic catalog against a user's debate-matching profile. Use shared categories, tags, style fit, skill level, evidence preference, preferred pace, stated preferences, and avoid signals. Prefer topics likely to produce specific, civil, balanced 1v1 debates. Return only valid JSON with keys: source and matches. matches must be an array of exactly the requested limit. Each match must include topicId, title, category, score, reason, and stancePrompt. score must be an integer from 1 to 100. reason must be one concise sentence. stancePrompt must invite the user to choose a side without deciding for them.",
         },
         {
           role: "user",
@@ -554,6 +559,111 @@ async function createDeepSeekCopilotAnalysis(payload) {
   return validateCopilotAnalysis({ ...analysis, source: "deepseek" });
 }
 
+function createLocalDebateRecap({ debate, messages }) {
+  const transcript = normalizeTranscript(messages).filter((message) => message.speaker !== "System");
+  const claims = transcript.slice(-6).map((message) => `${message.speaker}: ${message.text.slice(0, 160)}`);
+  const factChecks = createLocalCopilotAnalysis({ debate, messages }).factChecks;
+
+  return {
+    source: "local",
+    summary: transcript.length
+      ? `The debate covered ${debate.topicTitle}. The last major point was: ${transcript.at(-1).text.slice(0, 180)}`
+      : `The debate on ${debate.topicTitle} closed without substantive messages.`,
+    strongestClaims: claims.length ? claims.slice(0, 4) : ["No substantive claims were recorded."],
+    unresolvedQuestions: ["Which factual claims need outside sources before either side relies on them?"],
+    factCheckQueue: factChecks.length ? factChecks : [],
+    xpNotes: "Award XP for completing phases, answering directly, and using sourced claims.",
+    civilityNotes: "Review whether both sides answered the topic directly and avoided personal attacks.",
+    nextSteps: ["Review flagged claims.", "Save useful annotations.", "Start a rematch with a narrower framing."],
+  };
+}
+
+function createRecapPromptPayload({ debate, messages }) {
+  return {
+    product: "Debate.it",
+    debate: {
+      topic: debate.topicTitle,
+      status: debate.status,
+      participants: debate.participants.map((participant) => ({
+        name: participant.name,
+        stance: participant.stance,
+      })),
+    },
+    promptEngineering: {
+      summary:
+        "Write a neutral post-debate summary. Do not name a winner. Explain the main clash and what each side tried to prove.",
+      strongestClaims:
+        "Extract the strongest claim from each side when available. Prefer claims that connect directly to the topic.",
+      unresolvedQuestions:
+        "List unresolved questions that would improve a rematch or future research.",
+      factCheckQueue:
+        "Queue factual claims for later verification. Do not invent citations. Use statuses: Needs source, Likely supported, Questionable, Opinion/Value claim.",
+      xpAndCivility:
+        "Give concise XP and civility notes based on completion, directness, sourcing, and tone. Do not shame users.",
+    },
+    transcript: normalizeTranscript(messages),
+  };
+}
+
+function validateDebateRecap(recap) {
+  return {
+    source: recap.source || "deepseek",
+    summary: recap.summary || "No recap available.",
+    strongestClaims: Array.isArray(recap.strongestClaims) ? recap.strongestClaims.slice(0, 6) : [],
+    unresolvedQuestions: Array.isArray(recap.unresolvedQuestions) ? recap.unresolvedQuestions.slice(0, 6) : [],
+    factCheckQueue: Array.isArray(recap.factCheckQueue) ? recap.factCheckQueue.slice(0, 8) : [],
+    xpNotes: recap.xpNotes || "XP review pending.",
+    civilityNotes: recap.civilityNotes || "Civility review pending.",
+    nextSteps: Array.isArray(recap.nextSteps) ? recap.nextSteps.slice(0, 5) : [],
+  };
+}
+
+async function createDeepSeekDebateRecap(payload) {
+  if (!deepSeekApiKey) {
+    return createLocalDebateRecap(payload);
+  }
+
+  const apiResponse = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${deepSeekApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: deepSeekModel,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are Debate.it's post-debate review engine. Return only valid JSON with keys: source, summary, strongestClaims, unresolvedQuestions, factCheckQueue, xpNotes, civilityNotes, nextSteps. Be neutral, concise, and do not decide a winner. Do not invent citations.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify(createRecapPromptPayload(payload)),
+        },
+      ],
+      temperature: 0.2,
+      stream: false,
+    }),
+  });
+
+  if (!apiResponse.ok) {
+    const errorText = await apiResponse.text();
+    throw new Error(`DeepSeek recap request failed: ${apiResponse.status} ${errorText}`);
+  }
+
+  const data = await apiResponse.json();
+  const content = data.choices?.[0]?.message?.content || "";
+  const recap = parseJsonContent(content);
+
+  if (!recap) {
+    throw new Error("DeepSeek returned non-JSON recap content");
+  }
+
+  return validateDebateRecap({ ...recap, source: "deepseek" });
+}
+
 function serveStatic(request, response) {
   const requestUrl = new URL(request.url, `http://${request.headers.host}`);
   const pathname = decodeURIComponent(requestUrl.pathname);
@@ -652,6 +762,49 @@ function broadcastDebate(debateId, payload) {
 
 function broadcastDebateExcept(debateId, excludedUserId, payload) {
   broadcastToUsersExcept(database.listDebateParticipantIds(debateId), excludedUserId, payload);
+}
+
+async function getOrCreateDebateRecap(debateId) {
+  const debate = database.getDebateContext(debateId);
+  const messages = database.listMessages(debateId);
+
+  if (!debate) {
+    const error = new Error("Debate not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const transcriptHash = createTranscriptHash({ debate, messages });
+  const cached = database.getAiInsight(debateId, "recap", transcriptHash);
+
+  if (cached?.payload) {
+    return { recap: cached.payload, cached: true, transcriptHash };
+  }
+
+  const recap = await createDeepSeekDebateRecap({ debate, messages });
+  database.saveAiInsight({
+    debateId,
+    insightType: "recap",
+    transcriptHash,
+    payload: recap,
+  });
+
+  return { recap, cached: false, transcriptHash };
+}
+
+async function broadcastDebateRecap(debateId) {
+  try {
+    const result = await getOrCreateDebateRecap(debateId);
+
+    broadcastDebate(debateId, {
+      type: "debate_recap",
+      debateId,
+      recap: result.recap,
+      transcriptHash: result.transcriptHash,
+    });
+  } catch {
+    // Recaps are a secondary workflow; the debate state should still update if AI is unavailable.
+  }
 }
 
 function parseWebSocketFrames(buffer) {
@@ -1107,6 +1260,8 @@ const server = http.createServer(async (request, response) => {
   const messagesMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/messages$/);
   const debateStateMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/state$/);
   const copilotMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/copilot$/);
+  const recapMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/recap$/);
+  const factCheckMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/fact-checks$/);
 
   if (request.method === "GET" && debateStateMatch) {
     const user = requireDebateParticipant(request, response, debateStateMatch[1]);
@@ -1119,6 +1274,10 @@ const server = http.createServer(async (request, response) => {
         debateId: debateStateMatch[1],
         debateState,
       });
+
+      if (debateState?.isFinished) {
+        broadcastDebateRecap(debateStateMatch[1]);
+      }
     }
     return;
   }
@@ -1160,6 +1319,10 @@ const server = http.createServer(async (request, response) => {
           messages,
           debateState,
         });
+
+        if (debateState?.isFinished) {
+          broadcastDebateRecap(messagesMatch[1]);
+        }
       } catch (error) {
         sendError(response, error);
       }
@@ -1218,6 +1381,85 @@ const server = http.createServer(async (request, response) => {
       }
     }
     return;
+  }
+
+  if (request.method === "POST" && recapMatch) {
+    try {
+      const user = requireDebateParticipant(request, response, recapMatch[1]);
+
+      if (!user) {
+        return;
+      }
+
+      const result = await getOrCreateDebateRecap(recapMatch[1]);
+      sendJson(response, 200, result);
+      broadcastDebate(recapMatch[1], {
+        type: "debate_recap",
+        debateId: recapMatch[1],
+        recap: result.recap,
+        transcriptHash: result.transcriptHash,
+      });
+    } catch (error) {
+      try {
+        const debate = database.getDebateContext(recapMatch[1]);
+        const messages = database.listMessages(recapMatch[1]);
+
+        if (!debate) {
+          throw error;
+        }
+
+        sendJson(response, 200, {
+          recap: createLocalDebateRecap({ debate, messages }),
+          cached: false,
+          fallback: true,
+        });
+      } catch {
+        sendError(response, error);
+      }
+    }
+    return;
+  }
+
+  if (factCheckMatch) {
+    if (request.method === "GET") {
+      const user = requireDebateParticipant(request, response, factCheckMatch[1]);
+
+      if (user) {
+        sendJson(response, 200, { reviews: database.listFactCheckReviews(factCheckMatch[1], user.id) });
+      }
+      return;
+    }
+
+    if (request.method === "POST") {
+      try {
+        const user = requireDebateParticipant(request, response, factCheckMatch[1]);
+
+        if (!user) {
+          return;
+        }
+
+        const body = await readBody(request);
+        const payload = JSON.parse(body || "{}");
+        const review = database.upsertFactCheckReview({
+          debateId: factCheckMatch[1],
+          userId: user.id,
+          claimKey: payload.claimKey,
+          claim: payload.claim,
+          status: payload.status,
+          note: payload.note,
+          sourceType: payload.sourceType,
+        });
+        sendJson(response, 200, { review });
+        broadcastDebate(factCheckMatch[1], {
+          type: "fact_check_review",
+          debateId: factCheckMatch[1],
+          review,
+        });
+      } catch (error) {
+        sendError(response, error);
+      }
+      return;
+    }
   }
 
   const annotationsMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/annotations$/);

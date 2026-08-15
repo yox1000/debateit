@@ -149,6 +149,8 @@ let userDebates = [];
 let userProposals = [];
 let messageCache = new Map();
 let annotationCache = new Map();
+let factCheckReviewCache = new Map();
+let debateRecapCache = new Map();
 let unreadProposalIds = new Set();
 let activeTopic = null;
 let selectedStance = "";
@@ -158,9 +160,12 @@ let debateFilters = new Set();
 let activeRoomDebateId = "";
 let activeCopilotTab = "notes";
 let activeCopilotAnalysis = null;
+let activeDebateRecap = null;
 let copilotAnalysisCache = new Map();
 let copilotLoading = false;
+let recapLoading = false;
 let copilotAnalyzeTimeout = 0;
+let expandedFactKey = "";
 let pendingAnnotationSelection = null;
 let statePollId = 0;
 let documentGlowTimeout = 0;
@@ -233,6 +238,22 @@ function appendById(items, item) {
   }
 
   return [...items, item];
+}
+
+function upsertByClaimKey(items, item) {
+  if (!item?.claimKey) {
+    return items;
+  }
+
+  const existingIndex = items.findIndex((candidate) => candidate.claimKey === item.claimKey);
+
+  if (existingIndex === -1) {
+    return [item, ...items];
+  }
+
+  const nextItems = [...items];
+  nextItems[existingIndex] = item;
+  return nextItems;
 }
 
 function sendRealtime(payload) {
@@ -427,6 +448,39 @@ async function handleRealtimeEvent(event) {
 
       activeCopilotAnalysis = event.analysis;
       copilotAnalysisCache.set(getCopilotCacheKey(event.debateId), event.analysis);
+
+      if (debate) {
+        renderCopilot(getChatMessages(event.debateId), debate);
+      }
+    }
+    return;
+  }
+
+  if (event.type === "debate_recap") {
+    debateRecapCache.set(event.debateId, event.recap);
+
+    if (event.debateId === activeRoomDebateId) {
+      const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
+
+      activeDebateRecap = event.recap;
+
+      if (debate) {
+        renderCopilot(getChatMessages(event.debateId), debate);
+      }
+    }
+    return;
+  }
+
+  if (event.type === "fact_check_review") {
+    if (event.review?.userId && event.review.userId !== activeUser.id) {
+      return;
+    }
+
+    const reviews = getFactCheckReviews(event.debateId);
+    saveFactCheckReviews(event.debateId, upsertByClaimKey(reviews, event.review));
+
+    if (event.debateId === activeRoomDebateId) {
+      const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
 
       if (debate) {
         renderCopilot(getChatMessages(event.debateId), debate);
@@ -880,6 +934,10 @@ function fillProfileEditForm(user) {
     applyDetectedCountryDefault(countrySelect, detectedCountry);
   }
   profileEditForm.elements.debateStyle.value = profile.debateStyle || "Exploratory";
+  profileEditForm.elements.skillLevel.value = profile.skillLevel || "Casual";
+  profileEditForm.elements.preferredPace.value = profile.preferredPace || "Standard";
+  profileEditForm.elements.evidencePreference.value = profile.evidencePreference || "Balanced";
+  profileEditForm.elements.civilityPreference.value = profile.civilityPreference || "Strict civility";
   profileEditForm.elements.interests.value = (profile.topics?.length ? profile.topics : user.interests || []).join(", ");
   profileEditForm.elements.debateBio.value = user.debateBio || "";
   profileEditMessage.textContent = "";
@@ -1314,12 +1372,13 @@ function renderMyDebates() {
     list.append(empty);
   } else {
     records.forEach((record) => {
-      const item = document.createElement(record.status === "active" ? "button" : "article");
+      const canOpen = ["active", "closed"].includes(record.status);
+      const item = document.createElement(canOpen ? "button" : "article");
       const title = document.createElement("h3");
       const detail = document.createElement("p");
 
       item.className = "debate-record";
-      if (record.status === "active") {
+      if (canOpen) {
         item.type = "button";
         item.classList.add("clickable-record");
         item.addEventListener("click", () => showDebateRoom(record.id));
@@ -1396,6 +1455,10 @@ function renderProfile(user) {
   profileSignals.replaceChildren();
   [
     ["Difficulty", matchingSignals.difficulty || "Casual"],
+    ["Skill", profile?.skillLevel || "Casual"],
+    ["Pace", profile?.preferredPace || "Standard"],
+    ["Evidence", profile?.evidencePreference || "Balanced"],
+    ["Civility", profile?.civilityPreference || "Strict civility"],
     ["Prefers", prefers.length ? prefers.join(", ") : "Clear rounds, civil rebuttals"],
     ["Avoids", avoids.length ? avoids.join(", ") : "None listed"],
   ].forEach(([label, value]) => {
@@ -1689,7 +1752,10 @@ function leaveActiveRoom() {
 
   activeDebateState = null;
   activeCopilotAnalysis = null;
+  activeDebateRecap = null;
   copilotLoading = false;
+  recapLoading = false;
+  expandedFactKey = "";
   window.clearTimeout(copilotAnalyzeTimeout);
   window.clearInterval(turnTimerInterval);
 }
@@ -1726,6 +1792,8 @@ function showAuth() {
   userProposals = [];
   messageCache = new Map();
   annotationCache = new Map();
+  factCheckReviewCache = new Map();
+  debateRecapCache = new Map();
   unreadProposalIds.clear();
   profileMenu.hidden = true;
   setNotificationVisibility(false);
@@ -1807,7 +1875,7 @@ function showDebateTopic(topic, prompt) {
 async function showDebateRoom(debateId) {
   const debate = getLocalDebates().find((candidate) => candidate.id === debateId);
 
-  if (!debate || debate.status !== "active") {
+  if (!debate || !["active", "closed"].includes(debate.status)) {
     return;
   }
 
@@ -1816,6 +1884,9 @@ async function showDebateRoom(debateId) {
   updateHeaderProfile();
   activeRoomDebateId = debateId;
   pendingAnnotationSelection = null;
+  expandedFactKey = "";
+  activeCopilotAnalysis = null;
+  activeDebateRecap = debateRecapCache.get(debateId) || null;
   roomTitle.textContent = debate.topicTitle;
   roomDetail.textContent = debate.detail;
   await loadRoomState(debateId);
@@ -1823,7 +1894,11 @@ async function showDebateRoom(debateId) {
   renderDebateState(activeDebateState);
   sendRealtime({ type: "join_room", debateId });
   renderChatThread(debate);
-  loadCopilotAnalysis(debateId, false).catch(() => {});
+  if (debate.status === "closed") {
+    loadDebateRecap(debateId, false).catch(() => {});
+  } else {
+    loadCopilotAnalysis(debateId, false).catch(() => {});
+  }
   notificationPanel.hidden = true;
   authView.hidden = true;
   appView.hidden = true;
@@ -1896,15 +1971,29 @@ function saveAnnotations(debateId, annotations) {
   annotationCache.set(debateId, annotations);
 }
 
+function getFactCheckReviews(debateId = activeRoomDebateId) {
+  if (!debateId) {
+    return [];
+  }
+
+  return factCheckReviewCache.get(debateId) || [];
+}
+
+function saveFactCheckReviews(debateId, reviews) {
+  factCheckReviewCache.set(debateId, reviews);
+}
+
 async function loadRoomState(debateId) {
-  const [messagesData, annotationsData, stateData] = await Promise.all([
+  const [messagesData, annotationsData, stateData, factChecksData] = await Promise.all([
     apiRequest(`/api/debates/${encodeURIComponent(debateId)}/messages`),
     apiRequest(`/api/debates/${encodeURIComponent(debateId)}/annotations`),
     apiRequest(`/api/debates/${encodeURIComponent(debateId)}/state`),
+    apiRequest(`/api/debates/${encodeURIComponent(debateId)}/fact-checks`),
   ]);
 
   messageCache.set(debateId, messagesData.messages || []);
   annotationCache.set(debateId, annotationsData.annotations || []);
+  factCheckReviewCache.set(debateId, factChecksData.reviews || []);
   setDebateState(debateId, stateData.debateState);
 }
 
@@ -2094,8 +2183,68 @@ function getCopilotCacheKey(debateId = activeRoomDebateId) {
   return `${debateId}:${getCopilotSignature(debateId)}`;
 }
 
+function createStableKey(value) {
+  let hash = 2166136261;
+  const text = String(value || "");
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(16);
+}
+
+function getFactClaimKey(fact) {
+  return fact.claimKey || createStableKey(`${activeRoomDebateId}:${fact.speaker || ""}:${fact.claim || ""}`);
+}
+
 function formatCopilotSource(source = "local") {
   return source === "deepseek" ? "DeepSeek" : source === "local" ? "Local" : source;
+}
+
+async function loadDebateRecap(debateId = activeRoomDebateId, force = false) {
+  if (!debateId) {
+    return null;
+  }
+
+  const debate = getLocalDebates().find((candidate) => candidate.id === debateId);
+
+  if (!debate) {
+    return null;
+  }
+
+  if (!force && debateRecapCache.has(debateId)) {
+    activeDebateRecap = debateRecapCache.get(debateId);
+    renderCopilot(getChatMessages(debateId), debate);
+    return activeDebateRecap;
+  }
+
+  recapLoading = true;
+  renderCopilot(getChatMessages(debateId), debate);
+
+  try {
+    const { recap } = await apiRequest(`/api/debates/${encodeURIComponent(debateId)}/recap`, {
+      method: "POST",
+      body: JSON.stringify({ force }),
+    });
+
+    if (activeRoomDebateId !== debateId) {
+      return recap;
+    }
+
+    activeDebateRecap = recap;
+    debateRecapCache.set(debateId, recap);
+    renderCopilot(getChatMessages(debateId), debate);
+    return recap;
+  } catch {
+    return null;
+  } finally {
+    if (activeRoomDebateId === debateId) {
+      recapLoading = false;
+      renderCopilot(getChatMessages(debateId), debate);
+    }
+  }
 }
 
 async function loadCopilotAnalysis(debateId = activeRoomDebateId, force = false) {
@@ -2276,6 +2425,7 @@ function buildCopilotState(messages, debate = {}) {
   const side = getDebateSide(debate.detail);
   const unansweredOpponent = [...debateMessages].reverse().find((message) => getMessageRole(message) === "opponent");
   const analysis = activeCopilotAnalysis || {};
+  const recap = activeDebateRecap || {};
   const localNotes = recent.length
     ? recent.map(summarizeMessage)
     : [`You are arguing ${side}. Start with one clear claim and one reason.`];
@@ -2298,6 +2448,37 @@ function buildCopilotState(messages, debate = {}) {
             driftWarning: "Keep the next message inside the current debate phase.",
           };
 
+  if (debate.status === "closed" && recap.summary) {
+    return {
+      source: recap.source || "local",
+      phaseSummary: {
+        phase: "Post-debate recap",
+        summary: recap.summary,
+        speakerProgress: [],
+        keyClaims: Array.isArray(recap.strongestClaims) ? recap.strongestClaims : [],
+      },
+      unansweredClaims: Array.isArray(recap.unresolvedQuestions)
+        ? recap.unresolvedQuestions.map((question) => ({
+            from: "Recap",
+            claim: question,
+            suggestedResponse: "Use this to frame research or a rematch.",
+          }))
+        : [],
+      crossQuestions: Array.isArray(recap.nextSteps)
+        ? recap.nextSteps.map((step) => ({ question: step }))
+        : [],
+      factChecks: Array.isArray(recap.factCheckQueue) && recap.factCheckQueue.length
+        ? recap.factCheckQueue
+        : findFactSignals(messages),
+      focus: {
+        priority: recap.xpNotes || "Review the completed debate.",
+        nextMove: recap.civilityNotes || "Save notes and review unresolved claims.",
+        driftWarning: "This debate is closed. Start a new match to continue arguing.",
+      },
+      recap,
+    };
+  }
+
   return {
     source: analysis.source || "local",
     phaseSummary: analysis.phaseSummary || {
@@ -2312,6 +2493,7 @@ function buildCopilotState(messages, debate = {}) {
       ? analysis.factChecks
       : findFactSignals(messages),
     focus: analysis.focus || fallbackFocus,
+    recap: null,
   };
 }
 
@@ -2321,7 +2503,9 @@ function renderCopilotList(items, className = "copilot-list") {
 
   items.forEach((item) => {
     const row = document.createElement("li");
-    row.textContent = item;
+    row.textContent = typeof item === "string"
+      ? item
+      : item.claim || item.question || item.summary || item.text || JSON.stringify(item);
     list.append(row);
   });
 
@@ -2377,28 +2561,155 @@ function renderAiNotes(state) {
     wrap.append(unresolved);
   }
 
+  if (state.recap) {
+    wrap.append(renderDebateRecap(state.recap));
+  }
+
   return wrap;
+}
+
+function renderDebateRecap(recap) {
+  const card = document.createElement("article");
+  const heading = document.createElement("strong");
+  const xp = document.createElement("p");
+  const civility = document.createElement("p");
+
+  card.className = "ai-card debate-recap-card";
+  heading.textContent = "Post-debate review";
+  xp.textContent = recap.xpNotes || "XP review pending.";
+  civility.textContent = recap.civilityNotes || "Civility review pending.";
+  card.append(heading, xp, civility);
+
+  if (recap.nextSteps?.length) {
+    card.append(renderCopilotList(recap.nextSteps.slice(0, 4)));
+  }
+
+  return card;
 }
 
 function renderCopilotFacts(factChecks) {
   const list = document.createElement("div");
+  const reviewMap = new Map(getFactCheckReviews(activeRoomDebateId).map((review) => [review.claimKey, review]));
+
   list.className = "fact-list";
 
-  factChecks.forEach((fact) => {
+  factChecks.forEach((item) => {
+    const fact = typeof item === "string"
+      ? {
+          claim: item,
+          status: "Needs source",
+          reasoning: "Review this claim before relying on it.",
+        }
+      : item;
     const card = document.createElement("article");
+    const button = document.createElement("button");
     const claim = document.createElement("strong");
     const status = document.createElement("span");
     const question = document.createElement("p");
+    const source = document.createElement("p");
+    const claimKey = getFactClaimKey(fact);
+    const review = reviewMap.get(claimKey);
+    const currentStatus = review?.status || fact.status || "Needs source";
+
+    button.className = "fact-card-button";
+    button.type = "button";
+    button.setAttribute("aria-expanded", String(expandedFactKey === claimKey));
+    button.addEventListener("click", () => {
+      expandedFactKey = expandedFactKey === claimKey ? "" : claimKey;
+      renderCopilot(getChatMessages(activeRoomDebateId), getLocalDebates().find((debate) => debate.id === activeRoomDebateId));
+    });
 
     claim.textContent = fact.claim;
-    status.textContent = fact.status;
-    status.dataset.status = String(fact.status || "").toLowerCase().replace(/[^a-z]+/g, "-");
+    status.textContent = currentStatus;
+    status.dataset.status = String(currentStatus || "").toLowerCase().replace(/[^a-z]+/g, "-");
     question.textContent = fact.question || fact.reasoning || fact.suggestedSourceType || "Ask for a source before treating this as established.";
-    card.append(claim, status, question);
+    source.className = "fact-source";
+    source.textContent = `Source type: ${review?.sourceType || fact.suggestedSourceType || "Study, official statistic, or reputable report"}`;
+    button.append(claim, status, question, source);
+    card.append(button);
+
+    if (expandedFactKey === claimKey) {
+      card.append(renderFactReviewEditor(fact, claimKey, review));
+    }
+
     list.append(card);
   });
 
   return list;
+}
+
+function renderFactReviewEditor(fact, claimKey, review) {
+  const panel = document.createElement("div");
+  const actions = document.createElement("div");
+  const note = document.createElement("textarea");
+  const source = document.createElement("input");
+  const save = document.createElement("button");
+  const statuses = ["Needs source", "Likely supported", "Questionable", "Irrelevant"];
+
+  panel.className = "fact-review-panel";
+  actions.className = "fact-review-actions";
+  note.rows = 2;
+  note.placeholder = "Optional note for this claim...";
+  note.value = review?.note || "";
+  source.type = "text";
+  source.placeholder = "Source type";
+  source.value = review?.sourceType || fact.suggestedSourceType || "";
+  save.className = "secondary-button compact-button";
+  save.type = "button";
+  save.textContent = "Save note";
+
+  statuses.forEach((status) => {
+    const button = document.createElement("button");
+
+    button.className = "fact-status-button";
+    button.type = "button";
+    button.textContent = status === "Likely supported" ? "Sourced" : status;
+    button.classList.toggle("active", (review?.status || fact.status) === status);
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      saveFactReview({
+        fact,
+        claimKey,
+        status,
+        note: note.value,
+        sourceType: source.value,
+      });
+    });
+    actions.append(button);
+  });
+
+  save.addEventListener("click", (event) => {
+    event.stopPropagation();
+    saveFactReview({
+      fact,
+      claimKey,
+      status: review?.status || fact.status || "Needs source",
+      note: note.value,
+      sourceType: source.value,
+    });
+  });
+
+  panel.append(actions, source, note, save);
+  return panel;
+}
+
+async function saveFactReview({ fact, claimKey, status, note, sourceType }) {
+  if (!activeRoomDebateId) {
+    return;
+  }
+
+  const { review } = await apiRequest(`/api/debates/${encodeURIComponent(activeRoomDebateId)}/fact-checks`, {
+    method: "POST",
+    body: JSON.stringify({
+      claimKey,
+      claim: fact.claim,
+      status,
+      note,
+      sourceType,
+    }),
+  });
+  saveFactCheckReviews(activeRoomDebateId, upsertByClaimKey(getFactCheckReviews(activeRoomDebateId), review));
+  renderCopilot(getChatMessages(activeRoomDebateId), getLocalDebates().find((debate) => debate.id === activeRoomDebateId));
 }
 
 function renderCopilotFocus(state) {
@@ -2508,14 +2819,15 @@ function renderAnnotationNotes() {
 
 function renderCopilot(messages, debate = {}) {
   const state = buildCopilotState(messages, debate);
+  const isClosed = debate?.status === "closed";
 
   if (copilotSource) {
-    copilotSource.textContent = copilotLoading ? "Analyzing" : formatCopilotSource(state.source);
+    copilotSource.textContent = copilotLoading || recapLoading ? "Analyzing" : formatCopilotSource(state.source);
   }
 
   if (runCopilotButton) {
-    runCopilotButton.disabled = copilotLoading || !activeRoomDebateId;
-    runCopilotButton.textContent = copilotLoading ? "Analyzing" : "Analyze";
+    runCopilotButton.disabled = copilotLoading || recapLoading || !activeRoomDebateId;
+    runCopilotButton.textContent = copilotLoading || recapLoading ? "Analyzing" : isClosed ? "Recap" : "Analyze";
   }
 
   copilotTabs.forEach((tab) => {
@@ -2527,7 +2839,7 @@ function renderCopilot(messages, debate = {}) {
   copilotContent.replaceChildren();
 
   if (activeCopilotTab === "facts") {
-    if (copilotLoading) {
+    if (copilotLoading || recapLoading) {
       const loading = document.createElement("p");
       loading.className = "copilot-loading";
       loading.textContent = "Checking factual claims...";
@@ -2538,7 +2850,7 @@ function renderCopilot(messages, debate = {}) {
   }
 
   if (activeCopilotTab === "focus") {
-    if (copilotLoading) {
+    if (copilotLoading || recapLoading) {
       const loading = document.createElement("p");
       loading.className = "copilot-loading";
       loading.textContent = "Building next-move guidance...";
@@ -2548,10 +2860,10 @@ function renderCopilot(messages, debate = {}) {
     return;
   }
 
-  if (copilotLoading) {
+  if (copilotLoading || recapLoading) {
     const loading = document.createElement("p");
     loading.className = "copilot-loading";
-    loading.textContent = "Summarizing this phase...";
+    loading.textContent = isClosed ? "Building post-debate recap..." : "Summarizing this phase...";
     copilotContent.append(loading);
   }
   copilotContent.append(renderAiNotes(state), renderAnnotationNotes());
@@ -2713,6 +3025,10 @@ function createLocalProfile(selectedTopics, debateBio) {
       prefers: ["clear time limits", "evidence-based arguments"],
       avoids: [],
     },
+    skillLevel: "Casual",
+    preferredPace: "Standard",
+    evidencePreference: "Balanced",
+    civilityPreference: "Strict civility",
   };
 }
 
@@ -2722,7 +3038,16 @@ async function createDebateProfile(selectedTopics, debateBio) {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selectedTopics, debateBio }),
+      body: JSON.stringify({
+        selectedTopics,
+        debateBio,
+        profileSignals: {
+          skillLevel: "Casual",
+          preferredPace: "Standard",
+          evidencePreference: "Balanced",
+          civilityPreference: "Strict civility",
+        },
+      }),
     });
 
     const data = await response.json();
@@ -2809,6 +3134,10 @@ profileEditForm.addEventListener("submit", async (event) => {
     .slice(0, 6);
   const debateBio = String(formData.get("debateBio") || "").trim();
   const debateStyle = String(formData.get("debateStyle") || "Exploratory");
+  const skillLevel = String(formData.get("skillLevel") || "Casual");
+  const preferredPace = String(formData.get("preferredPace") || "Standard");
+  const evidencePreference = String(formData.get("evidencePreference") || "Balanced");
+  const civilityPreference = String(formData.get("civilityPreference") || "Strict civility");
   const existingProfile = activeUser.debateProfile || {};
 
   try {
@@ -2824,7 +3153,20 @@ profileEditForm.addEventListener("submit", async (event) => {
           source: existingProfile.source || "manual",
           topics: interests,
           debateStyle,
+          skillLevel,
+          preferredPace,
+          evidencePreference,
+          civilityPreference,
           summary: debateBio || existingProfile.summary || "Open to clear, civil debate.",
+          matchingSignals: {
+            ...(existingProfile.matchingSignals || {}),
+            difficulty: skillLevel,
+            prefers: [
+              evidencePreference,
+              preferredPace,
+              civilityPreference,
+            ].filter(Boolean),
+          },
         },
       }),
     });
@@ -3033,6 +3375,13 @@ copilotTabs.forEach((tab) => {
 });
 
 runCopilotButton.addEventListener("click", () => {
+  const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
+
+  if (debate?.status === "closed") {
+    loadDebateRecap(activeRoomDebateId, true).catch(() => {});
+    return;
+  }
+
   loadCopilotAnalysis(activeRoomDebateId, true).catch(() => {});
 });
 

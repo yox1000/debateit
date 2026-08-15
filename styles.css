@@ -1816,6 +1816,83 @@ h1 {
   line-height: 1.45;
 }
 
+.fact-list article {
+  overflow: hidden;
+}
+
+.fact-card-button {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fact-card-button:focus {
+  outline: 2px solid rgba(51, 95, 159, 0.28);
+  outline-offset: 3px;
+}
+
+.fact-source {
+  margin-top: 6px;
+  color: var(--blue-dark);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.fact-review-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(52, 82, 119, 0.12);
+}
+
+.fact-review-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.fact-status-button {
+  min-height: 32px;
+  border: 1px solid rgba(52, 82, 119, 0.16);
+  border-radius: 7px;
+  color: var(--muted);
+  background: rgba(248, 251, 253, 0.9);
+  font-size: 0.72rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.fact-status-button.active,
+.fact-status-button:hover,
+.fact-status-button:focus {
+  color: var(--blue-dark);
+  border-color: rgba(51, 95, 159, 0.28);
+  background: rgba(232, 242, 255, 0.96);
+  outline: none;
+}
+
+.fact-review-panel input,
+.fact-review-panel textarea {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid rgba(52, 82, 119, 0.16);
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  line-height: 1.35;
+}
+
+.debate-recap-card {
+  border-color: rgba(32, 120, 126, 0.2);
+  background: rgba(232, 247, 246, 0.8);
+}
+
 .fact-list {
   display: grid;
   gap: 8px;
@@ -1840,6 +1917,10 @@ h1 {
 }
 
 .fact-list span[data-status="opinion-value-claim"] {
+  color: var(--muted);
+}
+
+.fact-list span[data-status="irrelevant"] {
   color: var(--muted);
 }
 
@@ -1886,6 +1967,73 @@ h1 {
   }
 }
 
+@media (max-width: 700px) {
+  .app-shell,
+  .debate-shell,
+  .room-shell,
+  .profile-shell {
+    padding: 14px;
+  }
+
+  .app-header {
+    gap: 12px;
+    align-items: center;
+  }
+
+  .app-brand span:last-child {
+    font-size: 1rem;
+  }
+
+  .header-actions {
+    gap: 7px;
+  }
+
+  .icon-button,
+  .profile-button,
+  .mail-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .notification-panel,
+  .profile-menu {
+    position: fixed;
+    top: 68px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100vh - 88px);
+    overflow-y: auto;
+  }
+
+  .home-panel,
+  .room-panel,
+  .profile-page-panel {
+    padding: 18px;
+  }
+
+  .debate-format {
+    align-items: flex-start;
+  }
+
+  .phase-track {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chat-message {
+    width: min(94%, 620px);
+  }
+
+  .message-meta {
+    display: grid;
+    gap: 2px;
+  }
+
+  .copilot-head {
+    align-items: center;
+  }
+}
+
 @media (max-width: 460px) {
   .auth-shell,
   .survey-shell {
@@ -1915,17 +2063,19 @@ h1 {
   }
 
   .chat-thread {
-    min-height: 340px;
-    max-height: 54vh;
+    min-height: 300px;
+    max-height: 50vh;
     padding: 12px;
   }
 
   .chat-message {
-    width: 92%;
+    width: 96%;
+    padding: 10px;
   }
 
   .composer-row {
-    grid-template-columns: 42px minmax(0, 1fr);
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 8px;
   }
 
   .send-button {
@@ -1940,7 +2090,8 @@ h1 {
 
   .profile-actions,
   .profile-edit-grid,
-  .profile-edit-actions {
+  .profile-edit-actions,
+  .fact-review-actions {
     display: grid;
     grid-template-columns: 1fr;
   }
@@ -1951,7 +2102,17 @@ h1 {
   }
 
   .app-header {
-    align-items: flex-start;
+    align-items: center;
+  }
+
+  .source-badge {
+    padding: 6px 8px;
+    font-size: 0.7rem;
+  }
+
+  .copilot-actions .compact-button {
+    min-height: 30px;
+    padding: 0 9px;
   }
 
   .topic-grid {
