@@ -1243,6 +1243,22 @@ function createAnnotation({ debateId, messageId, userId, speaker, start, end, qu
     throw error;
   }
 
+  const message = db
+    .prepare("SELECT speaker FROM chat_messages WHERE id = ? AND debate_id = ?")
+    .get(messageId, debateId);
+
+  if (!message) {
+    const error = new Error("Message not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (message.speaker === "system") {
+    const error = new Error("System messages cannot be annotated.");
+    error.statusCode = 400;
+    throw error;
+  }
+
   const id = createId("note");
   const createdAt = nowIso();
 

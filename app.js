@@ -2025,6 +2025,12 @@ async function loadRoomState(debateId) {
 
 function renderMessageText(message) {
   const fragment = document.createDocumentFragment();
+
+  if (message.speaker === "system") {
+    fragment.append(document.createTextNode(message.text));
+    return fragment;
+  }
+
   const annotations = getAnnotations(activeRoomDebateId)
     .filter((annotation) => annotation.messageId === message.id)
     .sort((a, b) => a.start - b.start);
@@ -2086,6 +2092,11 @@ function captureAnnotationSelection() {
   const quote = selection.toString().trim();
 
   if (!quote || !startText || startText !== endText) {
+    return;
+  }
+
+  if (startText.dataset.speaker === "system") {
+    selection.removeAllRanges();
     return;
   }
 

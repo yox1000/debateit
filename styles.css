@@ -1469,6 +1469,10 @@ h1 {
   text-align: center;
 }
 
+.chat-message.system .message-text {
+  user-select: none;
+}
+
 .chat-composer {
   display: grid;
   gap: 8px;
