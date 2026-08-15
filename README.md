@@ -10,7 +10,8 @@ node server.js
 
 Open `http://localhost:8080`.
 
-To use DeepSeek for profile generation:
+To use DeepSeek for AI profile generation, topic matching, co-pilot analysis,
+post-debate recaps, and citation planning:
 
 ```bash
 cp .env.example .env
@@ -22,7 +23,8 @@ Then set `DEEPSEEK_API_KEY` in `.env` and run:
 node server.js
 ```
 
-Without `DEEPSEEK_API_KEY`, the app uses a local mock profile generator.
+Without `DEEPSEEK_API_KEY`, the app uses local fallback generators and still
+logs the AI workflow shape.
 
 The server also creates a local SQLite database at:
 
@@ -53,6 +55,51 @@ browser-sent user ids.
 - `GET /api/topics` returns the full topic catalog for testing.
 - Match recommendations are cached per mock user until the debate profile or topic catalog version changes.
 
+Opponent matching also snapshots profile preferences including skill level,
+preferred pace, evidence style, civility setting, debate style, interests,
+country, timezone, and topic tags.
+
+## Prompt Engineering
+
+Versioned prompts live in `prompts/*.v1.json`.
+
+Current prompt families:
+
+- `profile`
+- `topic-match`
+- `copilot.default`
+- `copilot.opening`
+- `copilot.rebuttal`
+- `copilot.cross-question`
+- `copilot.closing`
+- `recap`
+- `citation-search`
+- `repair-json`
+
+The server loads prompts by id/version, checks required JSON keys, optionally
+repairs malformed JSON through `repair-json`, and logs each AI call in SQLite.
+Some prompts include deterministic A/B variants; set `PROMPT_VARIANT` to force
+a specific variant during testing.
+
+Run prompt shape evals with:
+
+```bash
+node scripts/run-prompt-evals.js
+```
+
+AI inspection endpoints:
+
+- `GET /api/ai/prompts`
+- `GET /api/ai/logs?limit=50`
+- `POST /api/ai/logs/:logId/score`
+
+Citation planning is available through:
+
+- `POST /api/debates/:debateId/citation-plan`
+
+This creates search queries and source targets for a claim. It does not pretend
+to verify live citations until a real external search provider is connected.
+
 ## Database API
 
 Initial SQLite-backed endpoints:
@@ -73,6 +120,11 @@ Initial SQLite-backed endpoints:
 - `POST /api/debates/:debateId/messages`
 - `GET /api/debates/:debateId/annotations`
 - `POST /api/debates/:debateId/annotations`
+- `GET /api/debates/:debateId/fact-checks`
+- `POST /api/debates/:debateId/fact-checks`
+- `POST /api/debates/:debateId/copilot`
+- `POST /api/debates/:debateId/recap`
+- `POST /api/debates/:debateId/citation-plan`
 
 The frontend now writes auth, survey profile, matchmaking, debates, messages,
 and annotations through the SQLite API. The browser keeps only a lightweight

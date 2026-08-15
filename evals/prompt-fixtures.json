@@ -1,0 +1,55 @@
+[
+  {
+    "name": "profile-basic",
+    "promptName": "profile",
+    "requiredKeys": [
+      "source",
+      "topics",
+      "debateStyle",
+      "summary",
+      "suggestedTopics",
+      "matchingSignals",
+      "skillLevel",
+      "preferredPace",
+      "evidencePreference",
+      "civilityPreference"
+    ],
+    "input": {
+      "selectedTopics": ["Technology", "Ethics"],
+      "debateBio": "I like calm debates about AI policy with sources.",
+      "profileSignals": {
+        "skillLevel": "Intermediate",
+        "preferredPace": "Standard",
+        "evidencePreference": "Source-heavy",
+        "civilityPreference": "Strict civility"
+      }
+    }
+  },
+  {
+    "name": "copilot-rebuttal",
+    "promptName": "copilot.rebuttal",
+    "requiredKeys": ["source", "phaseSummary", "unansweredClaims", "crossQuestions", "factChecks", "focus"],
+    "input": {
+      "debate": {
+        "topic": "Should schools ban smartphones during class?",
+        "currentPhase": "Rebuttal",
+        "currentSpeaker": "Alex"
+      },
+      "transcript": [
+        {
+          "speaker": "Sam",
+          "text": "Studies show structured phone use can improve research skills."
+        }
+      ]
+    }
+  },
+  {
+    "name": "citation-plan",
+    "promptName": "citation-search",
+    "requiredKeys": ["source", "claim", "verificationPlan", "searchQueries", "sourceTargets", "citationNotes"],
+    "input": {
+      "claim": "Studies show structured classroom phone use can improve research skills.",
+      "sourceType": "Peer-reviewed study"
+    }
+  }
+]

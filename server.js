@@ -45,6 +45,8 @@ const deepSeekModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
 const topicCatalog = JSON.parse(fs.readFileSync(path.join(__dirname, "data", "debate-topics.json"), "utf8"));
 const topicCatalogVersion = crypto.createHash("sha1").update(JSON.stringify(topicCatalog)).digest("hex").slice(0, 12);
 const sessionCookieName = "debateit_session";
+const promptsDir = path.join(__dirname, "prompts");
+const aiRepairEnabled = process.env.AI_REPAIR_ENABLED !== "false";
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -54,6 +56,52 @@ const contentTypes = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
 };
+
+function loadPrompt(promptName) {
+  const filePath = path.join(promptsDir, `${promptName}.v1.json`);
+
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function getPromptVariant(prompt, seed = "") {
+  if (!Array.isArray(prompt.variants) || !prompt.variants.length) {
+    return { name: "default", system: prompt.system, userTemplate: prompt.userTemplate };
+  }
+
+  const forced = process.env.PROMPT_VARIANT || "";
+  const forcedVariant = prompt.variants.find((variant) => variant.name === forced);
+
+  if (forcedVariant) {
+    return {
+      name: forcedVariant.name,
+      system: forcedVariant.system || prompt.system,
+      userTemplate: forcedVariant.userTemplate || prompt.userTemplate,
+    };
+  }
+
+  const hash = crypto.createHash("sha1").update(`${prompt.id}:${seed}`).digest();
+  const index = hash[0] % prompt.variants.length;
+  const variant = prompt.variants[index];
+
+  return {
+    name: variant.name || `variant-${index}`,
+    system: variant.system || prompt.system,
+    userTemplate: variant.userTemplate || prompt.userTemplate,
+  };
+}
+
+function createInputHash(payload) {
+  return crypto.createHash("sha1").update(JSON.stringify(payload || {})).digest("hex").slice(0, 16);
+}
+
+function hasRequiredKeys(value, requiredKeys = []) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      requiredKeys.every((key) => Object.prototype.hasOwnProperty.call(value, key)),
+  );
+}
 
 function readBody(request) {
   return new Promise((resolve, reject) => {
@@ -264,16 +312,120 @@ function parseJsonContent(content) {
   try {
     return JSON.parse(content);
   } catch {
-    const match = content.match(/\{[\s\S]*\}/);
-    return match ? JSON.parse(match[0]) : null;
+    try {
+      const match = content.match(/\{[\s\S]*\}/);
+      return match ? JSON.parse(match[0]) : null;
+    } catch {
+      return null;
+    }
   }
 }
 
-async function createDeepSeekProfile(payload) {
+async function callDeepSeekJson({ feature, promptName, payload, seed = "", fallback, validate }) {
+  const prompt = loadPrompt(promptName);
+  const variant = getPromptVariant(prompt, seed || createInputHash(payload));
+  const inputHash = createInputHash({ feature, promptName, payload });
+  const startedAt = Date.now();
+
   if (!deepSeekApiKey) {
-    return createMockProfile(payload);
+    database.createAiRequestLog({
+      feature,
+      promptId: prompt.id,
+      promptVersion: prompt.version,
+      promptVariant: variant.name,
+      status: "local",
+      durationMs: 0,
+      inputHash,
+      output: fallback,
+    });
+    return fallback;
   }
 
+  try {
+    const apiResponse = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${deepSeekApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: deepSeekModel,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: variant.system,
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              ...variant.userTemplate,
+              payload,
+              requiredKeys: prompt.requiredKeys || [],
+            }),
+          },
+        ],
+        temperature: prompt.temperature ?? 0.2,
+        stream: false,
+      }),
+    });
+
+    if (!apiResponse.ok) {
+      const errorText = await apiResponse.text();
+      throw new Error(`DeepSeek ${feature} request failed: ${apiResponse.status} ${errorText}`);
+    }
+
+    const data = await apiResponse.json();
+    const content = data.choices?.[0]?.message?.content || "";
+    let parsed = parseJsonContent(content);
+    let repaired = false;
+
+    if ((!hasRequiredKeys(parsed, prompt.requiredKeys) || !parsed) && aiRepairEnabled) {
+      parsed = await repairDeepSeekJson({
+        feature,
+        originalPrompt: prompt,
+        rawContent: content,
+        payload,
+      });
+      repaired = true;
+    }
+
+    if (!hasRequiredKeys(parsed, prompt.requiredKeys)) {
+      throw new Error(`DeepSeek ${feature} returned invalid JSON shape`);
+    }
+
+    const output = validate ? validate(parsed) : parsed;
+
+    database.createAiRequestLog({
+      feature,
+      promptId: prompt.id,
+      promptVersion: prompt.version,
+      promptVariant: variant.name,
+      status: repaired ? "repaired" : "ok",
+      durationMs: Date.now() - startedAt,
+      inputHash,
+      output,
+    });
+
+    return output;
+  } catch (error) {
+    database.createAiRequestLog({
+      feature,
+      promptId: prompt.id,
+      promptVersion: prompt.version,
+      promptVariant: variant.name,
+      status: "error",
+      durationMs: Date.now() - startedAt,
+      inputHash,
+      error: error.message,
+    });
+    throw error;
+  }
+}
+
+async function repairDeepSeekJson({ feature, originalPrompt, rawContent, payload }) {
+  const repairPrompt = loadPrompt("repair-json");
+  const variant = getPromptVariant(repairPrompt, `${feature}:${createInputHash(payload)}`);
   const apiResponse = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: {
@@ -286,97 +438,79 @@ async function createDeepSeekProfile(payload) {
       messages: [
         {
           role: "system",
-          content:
-            "You create compact debate-matching profiles. Respond only with valid JSON using these keys: source, topics, debateStyle, summary, suggestedTopics, matchingSignals, skillLevel, preferredPace, evidencePreference, civilityPreference. matchingSignals must include difficulty, prefers, and avoids. Keep every field useful for matching two people into a civil 1v1 debate.",
+          content: variant.system,
         },
         {
           role: "user",
           content: JSON.stringify({
-            selectedTopics: payload.selectedTopics || [],
-            debateBio: payload.debateBio || "",
-            profileSignals: payload.profileSignals || {},
+            ...variant.userTemplate,
+            requiredKeys: originalPrompt.requiredKeys || [],
+            rawContent,
+            payload,
           }),
         },
       ],
-      temperature: 0.4,
+      temperature: repairPrompt.temperature ?? 0,
       stream: false,
     }),
   });
 
   if (!apiResponse.ok) {
     const errorText = await apiResponse.text();
-    throw new Error(`DeepSeek request failed: ${apiResponse.status} ${errorText}`);
+    throw new Error(`DeepSeek repair request failed: ${apiResponse.status} ${errorText}`);
   }
 
   const data = await apiResponse.json();
   const content = data.choices?.[0]?.message?.content || "";
-  const profile = parseJsonContent(content);
+  const parsed = parseJsonContent(content);
 
-  if (!profile) {
-    throw new Error("DeepSeek returned non-JSON content");
-  }
+  return parsed?.repaired || null;
+}
 
-  return {
-    ...profile,
-    source: "deepseek",
-  };
+async function createDeepSeekProfile(payload) {
+  return callDeepSeekJson({
+    feature: "profile",
+    promptName: "profile",
+    payload: {
+      selectedTopics: payload.selectedTopics || [],
+      debateBio: payload.debateBio || "",
+      profileSignals: payload.profileSignals || {},
+    },
+    seed: payload.debateBio || "",
+    fallback: createMockProfile(payload),
+    validate: (profile) => ({
+      ...profile,
+      source: deepSeekApiKey ? "deepseek" : profile.source || "mock",
+    }),
+  });
 }
 
 async function createDeepSeekMatches(payload) {
   const profile = payload.debateProfile || {};
   const limit = Math.min(Number(payload.limit || 8), 12);
 
-  if (!deepSeekApiKey) {
-    return createMockMatches(profile, limit);
-  }
-
-  const apiResponse = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${deepSeekApiKey}`,
-      "Content-Type": "application/json",
+  return callDeepSeekJson({
+    feature: "topic-match",
+    promptName: "topic-match",
+    payload: {
+      requestedLimit: limit,
+      debateProfile: profile,
+      candidateTopics: topicCatalog,
     },
-    body: JSON.stringify({
-      model: deepSeekModel,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are Debate.it's topic matching engine. Rank a candidate topic catalog against a user's debate-matching profile. Use shared categories, tags, style fit, skill level, evidence preference, preferred pace, stated preferences, and avoid signals. Prefer topics likely to produce specific, civil, balanced 1v1 debates. Return only valid JSON with keys: source and matches. matches must be an array of exactly the requested limit. Each match must include topicId, title, category, score, reason, and stancePrompt. score must be an integer from 1 to 100. reason must be one concise sentence. stancePrompt must invite the user to choose a side without deciding for them.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            requestedLimit: limit,
-            debateProfile: profile,
-            candidateTopics: topicCatalog,
-          }),
-        },
-      ],
-      temperature: 0.25,
-      stream: false,
-    }),
+    seed: JSON.stringify(profile),
+    fallback: createMockMatches(profile, limit),
+    validate: (result) => {
+      if (!result?.matches?.length) {
+        throw new Error("DeepSeek returned no topic matches");
+      }
+
+      return {
+        source: deepSeekApiKey ? "deepseek" : result.source || "mock",
+        catalogVersion: topicCatalogVersion,
+        matches: result.matches.slice(0, limit),
+      };
+    },
   });
-
-  if (!apiResponse.ok) {
-    const errorText = await apiResponse.text();
-    throw new Error(`DeepSeek match request failed: ${apiResponse.status} ${errorText}`);
-  }
-
-  const data = await apiResponse.json();
-  const content = data.choices?.[0]?.message?.content || "";
-  const result = parseJsonContent(content);
-
-  if (!result?.matches?.length) {
-    throw new Error("DeepSeek returned no topic matches");
-  }
-
-  return {
-    source: "deepseek",
-    catalogVersion: topicCatalogVersion,
-    matches: result.matches.slice(0, limit),
-  };
 }
 
 function normalizeTranscript(messages = []) {
@@ -514,49 +648,24 @@ function validateCopilotAnalysis(analysis) {
 }
 
 async function createDeepSeekCopilotAnalysis(payload) {
-  if (!deepSeekApiKey) {
-    return createLocalCopilotAnalysis(payload);
-  }
+  const phaseKey = payload.debate?.turnState?.phaseKey || "default";
+  const promptName = [
+    "opening",
+    "rebuttal",
+    "cross-question",
+    "closing",
+  ].includes(phaseKey)
+    ? `copilot.${phaseKey}`
+    : "copilot.default";
 
-  const apiResponse = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${deepSeekApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: deepSeekModel,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are Debate.it's live AI co-pilot for a structured 1v1 debate. Return only valid JSON with keys: source, phaseSummary, unansweredClaims, crossQuestions, factChecks, focus. Be neutral. Do not decide a winner. Do not invent citations or claim live verification. For factChecks, perform triage only and use statuses exactly from the user payload.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify(createCopilotPromptPayload(payload)),
-        },
-      ],
-      temperature: 0.2,
-      stream: false,
-    }),
+  return callDeepSeekJson({
+    feature: "copilot",
+    promptName,
+    payload: createCopilotPromptPayload(payload),
+    seed: `${payload.debate?.id || ""}:${phaseKey}`,
+    fallback: createLocalCopilotAnalysis(payload),
+    validate: (analysis) => validateCopilotAnalysis({ ...analysis, source: deepSeekApiKey ? "deepseek" : analysis.source }),
   });
-
-  if (!apiResponse.ok) {
-    const errorText = await apiResponse.text();
-    throw new Error(`DeepSeek co-pilot request failed: ${apiResponse.status} ${errorText}`);
-  }
-
-  const data = await apiResponse.json();
-  const content = data.choices?.[0]?.message?.content || "";
-  const analysis = parseJsonContent(content);
-
-  if (!analysis) {
-    throw new Error("DeepSeek returned non-JSON co-pilot content");
-  }
-
-  return validateCopilotAnalysis({ ...analysis, source: "deepseek" });
 }
 
 function createLocalDebateRecap({ debate, messages }) {
@@ -618,50 +727,63 @@ function validateDebateRecap(recap) {
   };
 }
 
-async function createDeepSeekDebateRecap(payload) {
-  if (!deepSeekApiKey) {
-    return createLocalDebateRecap(payload);
-  }
+function createLocalCitationPlan({ claim, sourceType = "" }) {
+  const cleanClaim = String(claim || "").trim();
 
-  const apiResponse = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${deepSeekApiKey}`,
-      "Content-Type": "application/json",
+  return {
+    source: "local",
+    claim: cleanClaim,
+    verificationPlan: "Find a primary or reputable secondary source, compare the source wording to the claim, then mark the claim as supported or questionable.",
+    searchQueries: [
+      `"${cleanClaim}"`,
+      `${cleanClaim} study`,
+      `${cleanClaim} official data`,
+    ].filter((query) => query.trim().length > 2).slice(0, 6),
+    sourceTargets: [
+      sourceType || "Peer-reviewed study",
+      "Official statistics or government report",
+      "Reputable explanatory reporting",
+    ],
+    citationNotes: "This is a search plan, not verified evidence yet.",
+  };
+}
+
+function validateCitationPlan(plan) {
+  return {
+    source: plan.source || "deepseek",
+    claim: plan.claim || "",
+    verificationPlan: plan.verificationPlan || "Search for a reliable source and compare it to the claim.",
+    searchQueries: Array.isArray(plan.searchQueries) ? plan.searchQueries.slice(0, 6) : [],
+    sourceTargets: Array.isArray(plan.sourceTargets) ? plan.sourceTargets.slice(0, 6) : [],
+    citationNotes: plan.citationNotes || "No citations verified yet.",
+  };
+}
+
+async function createDeepSeekCitationPlan(payload) {
+  return callDeepSeekJson({
+    feature: "citation-search",
+    promptName: "citation-search",
+    payload: {
+      claim: payload.claim || "",
+      sourceType: payload.sourceType || "",
+      debateTopic: payload.debateTopic || "",
+      sourceText: payload.sourceText || "",
     },
-    body: JSON.stringify({
-      model: deepSeekModel,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are Debate.it's post-debate review engine. Return only valid JSON with keys: source, summary, strongestClaims, unresolvedQuestions, factCheckQueue, xpNotes, civilityNotes, nextSteps. Be neutral, concise, and do not decide a winner. Do not invent citations.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify(createRecapPromptPayload(payload)),
-        },
-      ],
-      temperature: 0.2,
-      stream: false,
-    }),
+    seed: payload.claim || "",
+    fallback: createLocalCitationPlan(payload),
+    validate: (plan) => validateCitationPlan({ ...plan, source: deepSeekApiKey ? "deepseek" : plan.source }),
   });
+}
 
-  if (!apiResponse.ok) {
-    const errorText = await apiResponse.text();
-    throw new Error(`DeepSeek recap request failed: ${apiResponse.status} ${errorText}`);
-  }
-
-  const data = await apiResponse.json();
-  const content = data.choices?.[0]?.message?.content || "";
-  const recap = parseJsonContent(content);
-
-  if (!recap) {
-    throw new Error("DeepSeek returned non-JSON recap content");
-  }
-
-  return validateDebateRecap({ ...recap, source: "deepseek" });
+async function createDeepSeekDebateRecap(payload) {
+  return callDeepSeekJson({
+    feature: "recap",
+    promptName: "recap",
+    payload: createRecapPromptPayload(payload),
+    seed: payload.debate?.id || "",
+    fallback: createLocalDebateRecap(payload),
+    validate: (recap) => validateDebateRecap({ ...recap, source: deepSeekApiKey ? "deepseek" : recap.source }),
+  });
 }
 
 function serveStatic(request, response) {
@@ -1029,6 +1151,61 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && requestUrl.pathname === "/api/ai/logs") {
+    const user = requireAuthenticatedUser(request, response);
+
+    if (user) {
+      sendJson(response, 200, { logs: database.listAiRequestLogs(Number(requestUrl.searchParams.get("limit") || 50)) });
+    }
+    return;
+  }
+
+  const aiLogScoreMatch = requestUrl.pathname.match(/^\/api\/ai\/logs\/([^/]+)\/score$/);
+
+  if (request.method === "POST" && aiLogScoreMatch) {
+    try {
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const log = database.scoreAiRequestLog(aiLogScoreMatch[1], {
+        score: payload.score,
+        reviewNote: payload.reviewNote,
+      });
+      sendJson(response, log ? 200 : 404, log ? { log } : { error: "Log not found." });
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  if (request.method === "GET" && requestUrl.pathname === "/api/ai/prompts") {
+    const user = requireAuthenticatedUser(request, response);
+
+    if (user) {
+      const prompts = fs
+        .readdirSync(promptsDir)
+        .filter((fileName) => fileName.endsWith(".json"))
+        .map((fileName) => {
+          const prompt = JSON.parse(fs.readFileSync(path.join(promptsDir, fileName), "utf8"));
+
+          return {
+            fileName,
+            id: prompt.id,
+            version: prompt.version,
+            requiredKeys: prompt.requiredKeys || [],
+            variants: (prompt.variants || []).map((variant) => variant.name),
+          };
+        });
+      sendJson(response, 200, { prompts });
+    }
+    return;
+  }
+
   if (request.method === "POST" && requestUrl.pathname === "/api/db/clear-runtime") {
     sendJson(response, 200, database.clearDebateRuntimeData());
     return;
@@ -1262,6 +1439,7 @@ const server = http.createServer(async (request, response) => {
   const copilotMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/copilot$/);
   const recapMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/recap$/);
   const factCheckMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/fact-checks$/);
+  const citationMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/citation-plan$/);
 
   if (request.method === "GET" && debateStateMatch) {
     const user = requireDebateParticipant(request, response, debateStateMatch[1]);
@@ -1460,6 +1638,30 @@ const server = http.createServer(async (request, response) => {
       }
       return;
     }
+  }
+
+  if (request.method === "POST" && citationMatch) {
+    try {
+      const user = requireDebateParticipant(request, response, citationMatch[1]);
+
+      if (!user) {
+        return;
+      }
+
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const debate = database.getDebateContext(citationMatch[1]);
+      const plan = await createDeepSeekCitationPlan({
+        claim: payload.claim,
+        sourceType: payload.sourceType,
+        sourceText: payload.sourceText,
+        debateTopic: debate?.topicTitle || "",
+      });
+      sendJson(response, 200, { plan });
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
   }
 
   const annotationsMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/annotations$/);

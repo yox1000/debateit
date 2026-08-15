@@ -150,6 +150,7 @@ let userProposals = [];
 let messageCache = new Map();
 let annotationCache = new Map();
 let factCheckReviewCache = new Map();
+let citationPlanCache = new Map();
 let debateRecapCache = new Map();
 let unreadProposalIds = new Set();
 let activeTopic = null;
@@ -1793,6 +1794,7 @@ function showAuth() {
   messageCache = new Map();
   annotationCache = new Map();
   factCheckReviewCache = new Map();
+  citationPlanCache = new Map();
   debateRecapCache = new Map();
   unreadProposalIds.clear();
   profileMenu.hidden = true;
@@ -2644,7 +2646,9 @@ function renderFactReviewEditor(fact, claimKey, review) {
   const note = document.createElement("textarea");
   const source = document.createElement("input");
   const save = document.createElement("button");
+  const findSources = document.createElement("button");
   const statuses = ["Needs source", "Likely supported", "Questionable", "Irrelevant"];
+  const citationPlan = citationPlanCache.get(claimKey);
 
   panel.className = "fact-review-panel";
   actions.className = "fact-review-actions";
@@ -2657,6 +2661,9 @@ function renderFactReviewEditor(fact, claimKey, review) {
   save.className = "secondary-button compact-button";
   save.type = "button";
   save.textContent = "Save note";
+  findSources.className = "secondary-button compact-button";
+  findSources.type = "button";
+  findSources.textContent = citationPlan ? "Refresh sources" : "Find source targets";
 
   statuses.forEach((status) => {
     const button = document.createElement("button");
@@ -2689,8 +2696,63 @@ function renderFactReviewEditor(fact, claimKey, review) {
     });
   });
 
-  panel.append(actions, source, note, save);
+  findSources.addEventListener("click", (event) => {
+    event.stopPropagation();
+    loadCitationPlan({ fact, claimKey, sourceType: source.value });
+  });
+
+  panel.append(actions, source, note, save, findSources);
+
+  if (citationPlan) {
+    panel.append(renderCitationPlan(citationPlan));
+  }
+
   return panel;
+}
+
+function renderCitationPlan(plan) {
+  const card = document.createElement("div");
+  const heading = document.createElement("strong");
+  const note = document.createElement("p");
+  const queryList = document.createElement("ul");
+  const targetList = document.createElement("ul");
+
+  card.className = "citation-plan";
+  heading.textContent = "Source plan";
+  note.textContent = plan.citationNotes || plan.verificationPlan || "Use these searches to verify the claim.";
+  queryList.className = "copilot-list";
+  targetList.className = "copilot-list";
+
+  (plan.searchQueries || []).slice(0, 5).forEach((query) => {
+    const item = document.createElement("li");
+    item.textContent = query;
+    queryList.append(item);
+  });
+
+  (plan.sourceTargets || []).slice(0, 4).forEach((target) => {
+    const item = document.createElement("li");
+    item.textContent = target;
+    targetList.append(item);
+  });
+
+  card.append(heading, note, queryList, targetList);
+  return card;
+}
+
+async function loadCitationPlan({ fact, claimKey, sourceType }) {
+  if (!activeRoomDebateId) {
+    return;
+  }
+
+  const { plan } = await apiRequest(`/api/debates/${encodeURIComponent(activeRoomDebateId)}/citation-plan`, {
+    method: "POST",
+    body: JSON.stringify({
+      claim: fact.claim,
+      sourceType,
+    }),
+  });
+  citationPlanCache.set(claimKey, plan);
+  renderCopilot(getChatMessages(activeRoomDebateId), getLocalDebates().find((debate) => debate.id === activeRoomDebateId));
 }
 
 async function saveFactReview({ fact, claimKey, status, note, sourceType }) {

@@ -222,6 +222,22 @@ function initDatabase() {
       UNIQUE(debate_id, user_id, claim_key)
     );
 
+    CREATE TABLE IF NOT EXISTS ai_request_logs (
+      id TEXT PRIMARY KEY,
+      feature TEXT NOT NULL,
+      prompt_id TEXT NOT NULL,
+      prompt_version TEXT NOT NULL,
+      prompt_variant TEXT NOT NULL DEFAULT 'default',
+      status TEXT NOT NULL,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      input_hash TEXT NOT NULL,
+      output_json TEXT,
+      score INTEGER,
+      review_note TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_match_requests_lookup
       ON match_requests(topic_id, stance, status);
     CREATE INDEX IF NOT EXISTS idx_sessions_user
@@ -236,12 +252,16 @@ function initDatabase() {
       ON ai_insights(debate_id, insight_type, transcript_hash);
     CREATE INDEX IF NOT EXISTS idx_fact_check_reviews_debate
       ON fact_check_reviews(debate_id, user_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_request_logs_feature
+      ON ai_request_logs(feature, created_at);
   `);
 
   ensureColumn("match_requests", "metadata_json", "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn("debates", "phase_key", "TEXT NOT NULL DEFAULT 'opening'");
   ensureColumn("debates", "turn_index", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn("debates", "turn_deadline_at", "TEXT");
+  ensureColumn("ai_request_logs", "score", "INTEGER");
+  ensureColumn("ai_request_logs", "review_note", "TEXT NOT NULL DEFAULT ''");
 }
 
 function seedUsers() {
@@ -1267,6 +1287,90 @@ function saveAiInsight({ debateId, insightType, transcriptHash, payload }) {
   return getAiInsight(debateId, insightType, transcriptHash);
 }
 
+function createAiRequestLog({
+  feature,
+  promptId,
+  promptVersion,
+  promptVariant = "default",
+  status,
+  durationMs = 0,
+  inputHash,
+  output = null,
+  error = "",
+}) {
+  const id = createId("ailog");
+  const createdAt = nowIso();
+
+  db.prepare(`
+    INSERT INTO ai_request_logs (
+      id, feature, prompt_id, prompt_version, prompt_variant, status, duration_ms,
+      input_hash, output_json, error, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    String(feature || "unknown"),
+    String(promptId || "unknown"),
+    String(promptVersion || "unknown"),
+    String(promptVariant || "default"),
+    String(status || "unknown"),
+    Number(durationMs) || 0,
+    String(inputHash || ""),
+    output === undefined || output === null ? null : json(output, null),
+    String(error || "").slice(0, 1200),
+    createdAt,
+  );
+
+  return {
+    id,
+    feature,
+    promptId,
+    promptVersion,
+    promptVariant,
+    status,
+    durationMs,
+    inputHash,
+    createdAt,
+  };
+}
+
+function listAiRequestLogs(limit = 50) {
+  return db
+    .prepare(`
+      SELECT *
+      FROM ai_request_logs
+      ORDER BY created_at DESC
+      LIMIT ?
+    `)
+    .all(Math.min(Math.max(Number(limit) || 50, 1), 200))
+    .map((row) => ({
+      id: row.id,
+      feature: row.feature,
+      promptId: row.prompt_id,
+      promptVersion: row.prompt_version,
+      promptVariant: row.prompt_variant,
+      status: row.status,
+      durationMs: row.duration_ms,
+      inputHash: row.input_hash,
+      output: parseJson(row.output_json, null),
+      score: row.score,
+      reviewNote: row.review_note,
+      error: row.error,
+      createdAt: row.created_at,
+    }));
+}
+
+function scoreAiRequestLog(logId, { score = null, reviewNote = "" } = {}) {
+  const safeScore = score === null || score === undefined ? null : Math.max(1, Math.min(5, Number(score) || 1));
+
+  db.prepare(`
+    UPDATE ai_request_logs
+    SET score = ?, review_note = ?
+    WHERE id = ?
+  `).run(safeScore, String(reviewNote || "").trim(), logId);
+
+  return listAiRequestLogs(200).find((log) => log.id === logId) || null;
+}
+
 function getStatus() {
   const tables = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -1288,6 +1392,7 @@ migrateLegacyDebateTurns();
 
 module.exports = {
   createAnnotation,
+  createAiRequestLog,
   acceptProposal,
   cancelMatchRequest,
   clearDebateRuntimeData,
@@ -1298,6 +1403,7 @@ module.exports = {
   deleteSession,
   listDebateParticipantIds,
   listDebateParticipants,
+  listAiRequestLogs,
   listFactCheckReviews,
   getStatus,
   getAiInsight,
@@ -1313,6 +1419,7 @@ module.exports = {
   listProposalsForUser,
   rejectProposal,
   saveAiInsight,
+  scoreAiRequestLog,
   updateUserProfile,
   upsertFactCheckReview,
 };

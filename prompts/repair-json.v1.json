@@ -1,0 +1,10 @@
+{
+  "id": "repair-json",
+  "version": "1.0.0",
+  "temperature": 0,
+  "requiredKeys": ["repaired"],
+  "system": "You repair malformed AI JSON for Debate.it. Return only valid JSON with key repaired. repaired must be an object that satisfies the requested required keys. Do not add commentary.",
+  "userTemplate": {
+    "task": "Repair or reshape the model output into the expected JSON schema."
+  }
+}

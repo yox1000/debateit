@@ -1,0 +1,15 @@
+{
+  "id": "citation-search",
+  "version": "1.0.0",
+  "temperature": 0.15,
+  "requiredKeys": ["source", "claim", "verificationPlan", "searchQueries", "sourceTargets", "citationNotes"],
+  "system": "You are Debate.it's citation planning assistant. Return only valid JSON with keys: source, claim, verificationPlan, searchQueries, sourceTargets, citationNotes. You cannot browse from this prompt. Do not claim a citation verifies the claim unless source text was provided. Create citation-aware search queries and source targets for later verification.",
+  "userTemplate": {
+    "task": "Prepare a factual claim for citation-aware external verification.",
+    "rules": [
+      "Separate primary sources, academic sources, official statistics, and reputable reporting.",
+      "Include 3 to 6 targeted search queries.",
+      "Do not invent URLs, titles, authors, or publication dates."
+    ]
+  }
+}
