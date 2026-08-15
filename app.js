@@ -2758,17 +2758,23 @@ function renderTrustedFactCheck(factCheck) {
     card.append(stats);
   }
 
-  if (factCheck.evidence?.length) {
+  const evidence = (factCheck.evidence || []).filter((source) => {
+    const title = String(source.title || "").trim();
+
+    return title && !/^untitled\b/i.test(title);
+  });
+
+  if (evidence.length) {
     const evidenceList = document.createElement("div");
     evidenceList.className = "evidence-list";
-    factCheck.evidence.slice(0, 5).forEach((source) => {
+    evidence.slice(0, 5).forEach((source) => {
       const link = document.createElement("a");
       const note = document.createElement("span");
 
       link.href = source.url || "#";
       link.target = "_blank";
       link.rel = "noreferrer";
-      link.textContent = `${source.provider || "Source"}: ${source.title || "Untitled"}`;
+      link.textContent = `${source.provider || "Source"}: ${source.title}`;
       note.textContent = source.whatItSays || source.relevance || "";
       evidenceList.append(link, note);
     });

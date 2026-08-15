@@ -106,9 +106,11 @@ Trusted-source fact checks are available through:
 - `POST /api/debates/:debateId/fact-check-claim`
 
 This searches public trusted-source APIs, currently Wikipedia, Crossref, and
-OpenAlex, then asks DeepSeek to interpret the claim using only the gathered
-source bundle. The UI shows verdict, confidence, interpretation, stats when
-available, limitations, and links to the source results.
+OpenAlex. Legal and constitutional claims also route through CourtListener,
+Cornell LII, Oyez, and relevant government technical references when available.
+DeepSeek then interprets the claim using only the gathered source bundle. The UI
+shows verdict, confidence, interpretation, stats when available, limitations,
+and links to the source results.
 
 ## Database API
 

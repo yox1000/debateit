@@ -42,11 +42,13 @@ const host = process.env.HOST || "127.0.0.1";
 const publicDir = __dirname;
 const deepSeekApiKey = process.env.DEEPSEEK_API_KEY || "";
 const deepSeekModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+const courtListenerApiToken = process.env.COURTLISTENER_API_TOKEN || "";
 const topicCatalog = JSON.parse(fs.readFileSync(path.join(__dirname, "data", "debate-topics.json"), "utf8"));
 const topicCatalogVersion = crypto.createHash("sha1").update(JSON.stringify(topicCatalog)).digest("hex").slice(0, 12);
 const sessionCookieName = "debateit_session";
 const promptsDir = path.join(__dirname, "prompts");
 const aiRepairEnabled = process.env.AI_REPAIR_ENABLED !== "false";
+const factCheckSourceVersion = "legal-sources-v2";
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -106,6 +108,11 @@ function hasRequiredKeys(value, requiredKeys = []) {
 function stripMarkup(value = "") {
   return String(value)
     .replace(/<[^>]+>/g, " ")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -138,11 +145,12 @@ function decodeOpenAlexAbstract(invertedIndex) {
   return words.filter(Boolean).join(" ");
 }
 
-async function fetchJson(url) {
+async function fetchJson(url, options = {}) {
   const response = await fetch(url, {
     headers: {
       Accept: "application/json",
       "User-Agent": "Debate.it prototype fact-checker (local development)",
+      ...(options.headers || {}),
     },
   });
 
@@ -151,6 +159,21 @@ async function fetchJson(url) {
   }
 
   return response.json();
+}
+
+async function fetchText(url) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "text/html,application/xhtml+xml",
+      "User-Agent": "Debate.it prototype fact-checker (local development)",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Source request failed: ${response.status}`);
+  }
+
+  return response.text();
 }
 
 function readBody(request) {
@@ -857,19 +880,174 @@ async function searchOpenAlexSources(query) {
   }));
 }
 
-async function searchTrustedSources({ claim, debateTopic = "" }) {
+function isLegalClaim({ claim = "", sourceType = "", debateTopic = "" }) {
+  const text = `${claim} ${sourceType} ${debateTopic}`.toLowerCase();
+
+  return /\b(fourth amendment|first amendment|constitutional|constitution|unconstitutional|legal|law|court|case law|supreme court|warrant|seizure|search and seizure|privacy right|facial recognition)\b/.test(text);
+}
+
+function getLegalQueries({ claim = "", debateTopic = "" }) {
+  const text = `${claim} ${debateTopic}`.toLowerCase();
+  const queries = [];
+
+  if (text.includes("facial recognition") && text.includes("fourth amendment")) {
+    queries.push("\"facial recognition\" \"Fourth Amendment\"");
+    queries.push("\"facial recognition\" warrant privacy");
+  }
+
+  if (text.includes("fourth amendment")) {
+    queries.push("\"Fourth Amendment\" \"reasonable expectation of privacy\"");
+    queries.push("\"Fourth Amendment\" warrant search seizure");
+  }
+
+  queries.push([claim, debateTopic].filter(Boolean).join(" "));
+
+  return [...new Set(queries.filter((query) => query.trim().length > 3))].slice(0, 4);
+}
+
+async function searchCourtListenerSources(query) {
+  const data = await fetchJson(
+    `https://www.courtlistener.com/api/rest/v4/search/?q=${encodeURIComponent(query)}&type=o`,
+    courtListenerApiToken ? { headers: { Authorization: `Token ${courtListenerApiToken}` } } : {},
+  );
+
+  return (data.results || []).slice(0, 4).map((result) => {
+    const opinionSnippet = (result.opinions || []).map((opinion) => opinion.snippet).find(Boolean);
+    const citation = Array.isArray(result.citation) ? result.citation.join(", ") : result.citation || "";
+    const courtLine = [result.court, result.dateFiled, citation].filter(Boolean).join(" | ");
+
+    return {
+      provider: "CourtListener",
+      sourceType: "Case law",
+      title: truncate(result.caseNameFull || result.caseName || citation || "Court opinion", 180),
+      url: result.absolute_url ? `https://www.courtlistener.com${result.absolute_url}` : "",
+      snippet: truncate(opinionSnippet || result.syllabus || courtLine),
+      publishedAt: result.dateFiled || "",
+      trustReason: "Public legal database with court opinions and legal-document search.",
+    };
+  });
+}
+
+function extractHtmlTitle(html) {
+  return stripMarkup((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || "");
+}
+
+function extractMetaDescription(html) {
+  const named = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)/i);
+  const reversed = html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i);
+
+  return stripMarkup((named || reversed || [])[1] || "");
+}
+
+function extractFirstParagraph(html) {
+  const paragraphs = [...html.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)]
+    .map((match) => stripMarkup(match[1]))
+    .filter((paragraph) => paragraph.length > 80);
+
+  return paragraphs[0] || "";
+}
+
+async function createReferenceSource({ provider, sourceType, url, trustReason }) {
+  const html = await fetchText(url);
+  const title = extractHtmlTitle(html);
+  const snippet = extractMetaDescription(html) || extractFirstParagraph(html);
+
+  return {
+    provider,
+    sourceType,
+    title: truncate(title || url, 180),
+    url,
+    snippet: truncate(snippet),
+    publishedAt: "",
+    trustReason,
+  };
+}
+
+async function searchLegalReferenceSources({ claim = "", debateTopic = "" }) {
+  const text = `${claim} ${debateTopic}`.toLowerCase();
+  const references = [];
+
+  if (text.includes("fourth amendment")) {
+    references.push(
+      {
+        provider: "Cornell LII",
+        sourceType: "Legal reference",
+        url: "https://www.law.cornell.edu/wex/fourth_amendment",
+        trustReason: "Legal Information Institute explainer for Fourth Amendment doctrine.",
+      },
+      {
+        provider: "Cornell LII",
+        sourceType: "Constitution text",
+        url: "https://www.law.cornell.edu/constitution/fourth_amendment",
+        trustReason: "Primary constitutional text hosted by Cornell Legal Information Institute.",
+      },
+      {
+        provider: "Oyez",
+        sourceType: "Supreme Court summary",
+        url: "https://www.oyez.org/cases/2017/16-402",
+        trustReason: "Supreme Court case summary for Carpenter v. United States.",
+      },
+      {
+        provider: "Oyez",
+        sourceType: "Supreme Court summary",
+        url: "https://www.oyez.org/cases/1967/35",
+        trustReason: "Supreme Court case summary for Katz v. United States.",
+      },
+    );
+  }
+
+  if (text.includes("facial recognition")) {
+    references.push({
+      provider: "NIST",
+      sourceType: "Government technical report",
+      url: "https://www.nist.gov/programs-projects/face-recognition-vendor-test-frvt",
+      trustReason: "U.S. government technical testing program for facial recognition systems.",
+    });
+  }
+
+  const results = await Promise.allSettled(references.map((reference) => createReferenceSource(reference)));
+
+  return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+}
+
+function dedupeSources(sources = []) {
+  const seen = new Set();
+
+  return sources.filter((source) => {
+    const title = String(source.title || "").trim();
+    const url = String(source.url || "").trim();
+    const key = url || title.toLowerCase();
+
+    if (!title || /^untitled\b/i.test(title) || !url || seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+async function searchTrustedSources({ claim, debateTopic = "", sourceType = "" }) {
   const query = [claim, debateTopic].filter(Boolean).join(" ");
-  const searches = await Promise.allSettled([
+  const legalClaim = isLegalClaim({ claim, sourceType, debateTopic });
+  const legalQueries = legalClaim ? getLegalQueries({ claim, debateTopic }) : [];
+  const legalSearches = legalQueries.map((legalQuery) => searchCourtListenerSources(legalQuery));
+  const referenceSearches = legalClaim ? [searchLegalReferenceSources({ claim, debateTopic })] : [];
+  const generalSearches = [
     searchWikipediaSources(query),
     searchCrossrefSources(query),
     searchOpenAlexSources(query),
+  ];
+  const searches = await Promise.allSettled([
+    ...legalSearches,
+    ...referenceSearches,
+    ...generalSearches,
   ]);
   const sources = searches
     .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
-    .filter((source) => source.title && source.url)
-    .slice(0, 8);
+    .filter((source) => source.title && source.url);
 
-  return sources;
+  return dedupeSources(sources).slice(0, 10);
 }
 
 function createLocalTrustedFactCheck({ claim, sources = [] }) {
@@ -894,15 +1072,57 @@ function createLocalTrustedFactCheck({ claim, sources = [] }) {
   };
 }
 
-function validateTrustedFactCheck(result) {
+function normalizeConfidence(confidence) {
+  if (typeof confidence === "number") {
+    if (confidence < 0.4) {
+      return "Low";
+    }
+
+    if (confidence < 0.75) {
+      return "Medium";
+    }
+
+    return "High";
+  }
+
+  const value = String(confidence || "").trim();
+
+  if (/^0?\.\d+$/.test(value)) {
+    return normalizeConfidence(Number(value));
+  }
+
+  return value || "Low";
+}
+
+function normalizeEvidence(evidence = [], sourceBundle = []) {
+  return evidence.slice(0, 8).map((item) => {
+    const title = String(item.title || item.sourceTitle || "").trim();
+    const match = sourceBundle.find((source) => {
+      const sourceTitle = String(source.title || "").toLowerCase();
+      const itemTitle = title.toLowerCase();
+
+      return item.url === source.url || (itemTitle && (sourceTitle === itemTitle || sourceTitle.includes(itemTitle) || itemTitle.includes(sourceTitle)));
+    });
+
+    return {
+      title: title || match?.title || "",
+      provider: item.provider || match?.provider || "Source",
+      url: item.url || match?.url || "",
+      relevance: item.relevance || match?.trustReason || "",
+      whatItSays: item.whatItSays || item.summary || item.note || match?.snippet || "",
+    };
+  }).filter((item) => item.title && item.url && !/^untitled\b/i.test(item.title));
+}
+
+function validateTrustedFactCheck(result, sourceBundle = []) {
   return {
     source: result.source || "deepseek",
     claim: result.claim || "",
     verdict: result.verdict || "Not enough evidence",
-    confidence: result.confidence || "Low",
+    confidence: normalizeConfidence(result.confidence),
     interpretation: result.interpretation || "No interpretation available.",
     stats: Array.isArray(result.stats) ? result.stats.slice(0, 6) : [],
-    evidence: Array.isArray(result.evidence) ? result.evidence.slice(0, 8) : [],
+    evidence: Array.isArray(result.evidence) ? normalizeEvidence(result.evidence, sourceBundle) : [],
     limitations: result.limitations || "Review source links directly before relying on this fact-check.",
     checkedAt: result.checkedAt || new Date().toISOString(),
   };
@@ -918,12 +1138,13 @@ async function createDeepSeekTrustedFactCheck(payload) {
       claim: payload.claim || "",
       debateTopic: payload.debateTopic || "",
       sourceType: payload.sourceType || "",
+      sourceVersion: payload.sourceVersion || factCheckSourceVersion,
       sources,
       sourcePolicy: "Use only these trusted source search results. If they are indirect or insufficient, say Not enough evidence.",
     },
     seed: payload.claim || "",
     fallback: createLocalTrustedFactCheck({ claim: payload.claim, sources }),
-    validate: (result) => validateTrustedFactCheck({ ...result, source: deepSeekApiKey ? "deepseek" : result.source }),
+    validate: (result) => validateTrustedFactCheck({ ...result, source: deepSeekApiKey ? "deepseek" : result.source }, sources),
   });
 }
 
@@ -1855,6 +2076,7 @@ const server = http.createServer(async (request, response) => {
         claim,
         sourceType: payload.sourceType || "",
         topic: debate?.topicTitle || "",
+        sourceVersion: factCheckSourceVersion,
       });
       const cached = database.getAiInsight(trustedFactCheckMatch[1], "fact-check", claimHash);
 
@@ -1867,6 +2089,7 @@ const server = http.createServer(async (request, response) => {
         claim,
         sourceType: payload.sourceType,
         debateTopic: debate?.topicTitle || "",
+        sourceVersion: factCheckSourceVersion,
       });
       database.saveAiInsight({
         debateId: trustedFactCheckMatch[1],
