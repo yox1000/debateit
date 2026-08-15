@@ -48,7 +48,7 @@ const topicCatalogVersion = crypto.createHash("sha1").update(JSON.stringify(topi
 const sessionCookieName = "debateit_session";
 const promptsDir = path.join(__dirname, "prompts");
 const aiRepairEnabled = process.env.AI_REPAIR_ENABLED !== "false";
-const factCheckSourceVersion = "legal-sources-v2";
+const factCheckSourceVersion = "multi-agent-v1";
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -832,6 +832,103 @@ function validateCitationPlan(plan) {
   };
 }
 
+function inferClaimType({ claim = "", sourceType = "", debateTopic = "" }) {
+  const text = `${claim} ${sourceType} ${debateTopic}`.toLowerCase();
+
+  if (isLegalClaim({ claim, sourceType, debateTopic })) {
+    return "legal";
+  }
+
+  if (/\b(study|studies|research|scientific|clinical|experiment|peer-reviewed|biology|medicine|health|climate)\b/.test(text)) {
+    return "science";
+  }
+
+  if (/\b(percent|percentage|rate|statistics|data|survey|poll|increase|decrease|more than|less than|majority)\b/.test(text)) {
+    return "statistics";
+  }
+
+  if (/\b(history|historical|war|ancient|century|founded|invented)\b/.test(text)) {
+    return "history";
+  }
+
+  if (/\b(policy|regulation|ban|tax|government program|public policy)\b/.test(text)) {
+    return "policy";
+  }
+
+  if (/\b(should|better|worse|moral|ethical|fair|unfair|good|bad)\b/.test(text)) {
+    return "opinion/value";
+  }
+
+  return "general";
+}
+
+function createSearchQueriesForClaim({ claim = "", sourceType = "", debateTopic = "", claimType = "" }) {
+  const cleanClaim = String(claim || "").trim();
+  const baseQuery = [cleanClaim, debateTopic].filter(Boolean).join(" ");
+
+  if (claimType === "legal" || isLegalClaim({ claim, sourceType, debateTopic })) {
+    return getLegalQueries({ claim, debateTopic });
+  }
+
+  const queries = [
+    `"${cleanClaim}"`,
+    baseQuery,
+    `${baseQuery} official data`,
+    `${baseQuery} peer reviewed study`,
+    `${baseQuery} government report`,
+  ];
+
+  return [...new Set(queries.filter((query) => query.trim().length > 3))].slice(0, 6);
+}
+
+function createLocalClaimClassification(payload = {}) {
+  const claimType = inferClaimType(payload);
+  const checkability = claimType === "opinion/value" ? "Opinion/Value claim" : "Medium";
+
+  return {
+    source: "local",
+    claim: String(payload.claim || "").trim(),
+    claimType,
+    checkability,
+    sourceStrategy: claimType === "legal"
+      ? "Search case law, constitutional text, and legal explainers before using general background."
+      : "Search authoritative public sources, academic indexes, and official references before using general background.",
+    searchQueries: createSearchQueriesForClaim({ ...payload, claimType }),
+    reasoning: "Local classifier used keywords to route the claim to the search agent.",
+  };
+}
+
+function validateClaimClassification(result, payload = {}) {
+  const claimType = result.claimType || inferClaimType(payload);
+
+  return {
+    source: result.source || "deepseek",
+    claim: result.claim || payload.claim || "",
+    claimType,
+    checkability: result.checkability || (claimType === "opinion/value" ? "Opinion/Value claim" : "Medium"),
+    sourceStrategy: result.sourceStrategy || createLocalClaimClassification({ ...payload, claimType }).sourceStrategy,
+    searchQueries: Array.isArray(result.searchQueries) && result.searchQueries.length
+      ? result.searchQueries.slice(0, 6)
+      : createSearchQueriesForClaim({ ...payload, claimType }),
+    reasoning: result.reasoning || "No classifier reasoning provided.",
+  };
+}
+
+async function createDeepSeekClaimClassification(payload) {
+  return callDeepSeekJson({
+    feature: "claim-classifier",
+    promptName: "claim-classifier",
+    payload: {
+      claim: payload.claim || "",
+      sourceType: payload.sourceType || "",
+      debateTopic: payload.debateTopic || "",
+    },
+    seed: payload.claim || "",
+    fallback: createLocalClaimClassification(payload),
+    validate: (result) => validateClaimClassification({ ...result, source: deepSeekApiKey ? "deepseek" : result.source }, payload),
+  });
+}
+
 async function searchWikipediaSources(query) {
   const data = await fetchJson(
     `https://en.wikipedia.org/w/rest.php/v1/search/page?q=${encodeURIComponent(query)}&limit=3`,
@@ -1027,17 +1124,21 @@ function dedupeSources(sources = []) {
   });
 }
 
-async function searchTrustedSources({ claim, debateTopic = "", sourceType = "" }) {
+async function searchTrustedSources({ claim, debateTopic = "", sourceType = "", classification = null }) {
   const query = [claim, debateTopic].filter(Boolean).join(" ");
-  const legalClaim = isLegalClaim({ claim, sourceType, debateTopic });
-  const legalQueries = legalClaim ? getLegalQueries({ claim, debateTopic }) : [];
+  const legalClaim = classification?.claimType === "legal" || isLegalClaim({ claim, sourceType, debateTopic });
+  const classifierQueries = Array.isArray(classification?.searchQueries) ? classification.searchQueries : [];
+  const legalQueries = legalClaim
+    ? [...new Set([...classifierQueries, ...getLegalQueries({ claim, debateTopic })])].slice(0, 5)
+    : [];
+  const generalQueries = classifierQueries.length ? classifierQueries.slice(0, 2) : [query];
   const legalSearches = legalQueries.map((legalQuery) => searchCourtListenerSources(legalQuery));
   const referenceSearches = legalClaim ? [searchLegalReferenceSources({ claim, debateTopic })] : [];
-  const generalSearches = [
-    searchWikipediaSources(query),
-    searchCrossrefSources(query),
-    searchOpenAlexSources(query),
-  ];
+  const generalSearches = generalQueries.flatMap((searchQuery) => [
+    searchWikipediaSources(searchQuery),
+    searchCrossrefSources(searchQuery),
+    searchOpenAlexSources(searchQuery),
+  ]);
   const searches = await Promise.allSettled([
     ...legalSearches,
     ...referenceSearches,
@@ -1114,6 +1215,82 @@ function normalizeEvidence(evidence = [], sourceBundle = []) {
   }).filter((item) => item.title && item.url && !/^untitled\b/i.test(item.title));
 }
 
+function normalizeRankedSources(rankedSources = [], sourceBundle = []) {
+  const items = Array.isArray(rankedSources) ? rankedSources : [];
+
+  return items.slice(0, 10).map((item) => {
+    const title = String(item.title || item.sourceTitle || "").trim();
+    const match = sourceBundle.find((source) => {
+      const sourceTitle = String(source.title || "").toLowerCase();
+      const itemTitle = title.toLowerCase();
+
+      return item.url === source.url || (itemTitle && (sourceTitle === itemTitle || sourceTitle.includes(itemTitle) || itemTitle.includes(sourceTitle)));
+    });
+
+    return {
+      title: title || match?.title || "",
+      provider: item.provider || match?.provider || "Source",
+      url: item.url || match?.url || "",
+      strength: item.strength || item.rating || "Useful context",
+      reason: item.reason || item.relevance || match?.trustReason || "",
+      whatItSays: item.whatItSays || item.summary || match?.snippet || "",
+    };
+  }).filter((item) => item.title && item.url && !/^untitled\b/i.test(item.title));
+}
+
+function createLocalSourceEvaluation({ claim, sources = [] }) {
+  const rankedSources = sources.slice(0, 8).map((source, index) => ({
+    title: source.title,
+    provider: source.provider,
+    url: source.url,
+    strength: index < 3 ? "Useful context" : "Weak",
+    reason: source.trustReason || "Potentially relevant retrieved source.",
+    whatItSays: source.snippet || "",
+  }));
+
+  return {
+    source: "local",
+    claim: String(claim || "").trim(),
+    rankedSources,
+    bestEvidence: rankedSources.slice(0, 3),
+    weaknesses: sources.length
+      ? ["Local source ranking cannot fully evaluate source quality without DeepSeek."]
+      : ["No source results were retrieved."],
+    searchGaps: sources.length
+      ? ["Open each source before relying on the claim."]
+      : ["Try a narrower claim or a different source type."],
+  };
+}
+
+function validateSourceEvaluation(result, sourceBundle = []) {
+  const rankedSources = normalizeRankedSources(result.rankedSources || [], sourceBundle);
+
+  return {
+    source: result.source || "deepseek",
+    claim: result.claim || "",
+    rankedSources,
+    bestEvidence: normalizeRankedSources(result.bestEvidence || rankedSources.slice(0, 3), sourceBundle),
+    weaknesses: Array.isArray(result.weaknesses) ? result.weaknesses.slice(0, 5) : [],
+    searchGaps: Array.isArray(result.searchGaps) ? result.searchGaps.slice(0, 5) : [],
+  };
+}
+
+async function createDeepSeekSourceEvaluation(payload) {
+  return callDeepSeekJson({
+    feature: "source-evaluator",
+    promptName: "source-evaluator",
+    payload: {
+      claim: payload.claim || "",
+      claimClassification: payload.classification || {},
+      sources: payload.sources || [],
+      sourcePolicy: "Rank only provided sources. Do not add outside citations.",
+    },
+    seed: payload.claim || "",
+    fallback: createLocalSourceEvaluation(payload),
+    validate: (result) => validateSourceEvaluation({ ...result, source: deepSeekApiKey ? "deepseek" : result.source }, payload.sources || []),
+  });
+}
+
 function validateTrustedFactCheck(result, sourceBundle = []) {
   return {
     source: result.source || "deepseek",
@@ -1128,9 +1305,45 @@ function validateTrustedFactCheck(result, sourceBundle = []) {
   };
 }
 
-async function createDeepSeekTrustedFactCheck(payload) {
-  const sources = await searchTrustedSources(payload);
+function createLocalFactPresentation({ factCheck = {}, sourceEvaluation = {} }) {
+  return {
+    source: "local",
+    headline: `${factCheck.verdict || "Not enough evidence"}: ${factCheck.claim || "Claim"}`,
+    summary: factCheck.interpretation || "Review the evidence links before relying on this claim.",
+    nextStep: sourceEvaluation.searchGaps?.[0] || "Open the strongest source and compare it to the exact claim.",
+    caveat: factCheck.limitations || "This is an assisted research summary, not a final authority.",
+  };
+}
 
+function validateFactPresentation(result, payload = {}) {
+  const fallback = createLocalFactPresentation(payload);
+
+  return {
+    source: result.source || "deepseek",
+    headline: result.headline || fallback.headline,
+    summary: result.summary || fallback.summary,
+    nextStep: result.nextStep || fallback.nextStep,
+    caveat: result.caveat || fallback.caveat,
+  };
+}
+
+async function createDeepSeekFactPresentation(payload) {
+  return callDeepSeekJson({
+    feature: "fact-presentation",
+    promptName: "fact-presentation",
+    payload: {
+      claim: payload.factCheck?.claim || "",
+      claimClassification: payload.classification || {},
+      sourceEvaluation: payload.sourceEvaluation || {},
+      finalEvaluation: payload.factCheck || {},
+    },
+    seed: payload.factCheck?.claim || "",
+    fallback: createLocalFactPresentation(payload),
+    validate: (result) => validateFactPresentation({ ...result, source: deepSeekApiKey ? "deepseek" : result.source }, payload),
+  });
+}
+
+async function createDeepSeekTrustedFactCheck(payload) {
   return callDeepSeekJson({
     feature: "fact-check",
     promptName: "fact-check",
@@ -1139,13 +1352,75 @@ async function createDeepSeekTrustedFactCheck(payload) {
       debateTopic: payload.debateTopic || "",
       sourceType: payload.sourceType || "",
       sourceVersion: payload.sourceVersion || factCheckSourceVersion,
-      sources,
+      claimClassification: payload.classification || {},
+      sourceEvaluation: payload.sourceEvaluation || {},
+      sources: payload.sources || [],
       sourcePolicy: "Use only these trusted source search results. If they are indirect or insufficient, say Not enough evidence.",
     },
     seed: payload.claim || "",
-    fallback: createLocalTrustedFactCheck({ claim: payload.claim, sources }),
-    validate: (result) => validateTrustedFactCheck({ ...result, source: deepSeekApiKey ? "deepseek" : result.source }, sources),
+    fallback: createLocalTrustedFactCheck({ claim: payload.claim, sources: payload.sources || [] }),
+    validate: (result) => validateTrustedFactCheck({ ...result, source: deepSeekApiKey ? "deepseek" : result.source }, payload.sources || []),
   });
+}
+
+async function runFactCheckAgents(payload) {
+  const classification = await createDeepSeekClaimClassification(payload);
+  const sources = await searchTrustedSources({ ...payload, classification });
+  const sourceEvaluation = await createDeepSeekSourceEvaluation({
+    claim: payload.claim,
+    classification,
+    sources,
+  });
+  const factCheck = await createDeepSeekTrustedFactCheck({
+    ...payload,
+    classification,
+    sourceEvaluation,
+    sources,
+  });
+  const presentation = await createDeepSeekFactPresentation({
+    classification,
+    sourceEvaluation,
+    factCheck,
+  });
+
+  return {
+    ...factCheck,
+    presentation,
+    researchTrail: [
+      {
+        agent: "Claim Agent",
+        status: "complete",
+        summary: `${classification.claimType} claim, ${classification.checkability} checkability`,
+        details: classification.reasoning,
+      },
+      {
+        agent: "Search Agent",
+        status: "complete",
+        summary: `${sources.length} trusted source candidates found`,
+        details: classification.sourceStrategy,
+      },
+      {
+        agent: "Source Agent",
+        status: "complete",
+        summary: `${sourceEvaluation.rankedSources.length} sources ranked`,
+        details: sourceEvaluation.searchGaps?.[0] || sourceEvaluation.weaknesses?.[0] || "Sources ranked by relevance and authority.",
+      },
+      {
+        agent: "Evaluation Agent",
+        status: "complete",
+        summary: `${factCheck.verdict} with ${factCheck.confidence} confidence`,
+        details: factCheck.limitations,
+      },
+      {
+        agent: "Presentation Agent",
+        status: "complete",
+        summary: presentation.headline,
+        details: presentation.nextStep,
+      },
+    ],
+    claimClassification: classification,
+    sourceEvaluation,
+  };
 }
 
 async function createDeepSeekCitationPlan(payload) {
@@ -2085,7 +2360,7 @@ const server = http.createServer(async (request, response) => {
         return;
       }
 
-      const factCheck = await createDeepSeekTrustedFactCheck({
+      const factCheck = await runFactCheckAgents({
         claim,
         sourceType: payload.sourceType,
         debateTopic: debate?.topicTitle || "",

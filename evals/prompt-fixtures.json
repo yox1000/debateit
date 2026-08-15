@@ -53,6 +53,32 @@
     }
   },
   {
+    "name": "claim-classifier-legal",
+    "promptName": "claim-classifier",
+    "requiredKeys": ["source", "claim", "claimType", "checkability", "sourceStrategy", "searchQueries", "reasoning"],
+    "input": {
+      "claim": "Government use of facial recognition violates the Fourth Amendment.",
+      "sourceType": "case law",
+      "debateTopic": "Should governments use facial recognition in public spaces?"
+    }
+  },
+  {
+    "name": "source-evaluator-legal",
+    "promptName": "source-evaluator",
+    "requiredKeys": ["source", "claim", "rankedSources", "bestEvidence", "weaknesses", "searchGaps"],
+    "input": {
+      "claim": "Government use of facial recognition violates the Fourth Amendment.",
+      "sources": [
+        {
+          "provider": "CourtListener",
+          "title": "Example case",
+          "url": "https://example.com/case",
+          "snippet": "Example case-law source text."
+        }
+      ]
+    }
+  },
+  {
     "name": "trusted-fact-check",
     "promptName": "fact-check",
     "requiredKeys": ["source", "claim", "verdict", "confidence", "interpretation", "stats", "evidence", "limitations", "checkedAt"],
@@ -66,6 +92,22 @@
           "snippet": "Example source text."
         }
       ]
+    }
+  },
+  {
+    "name": "fact-presentation",
+    "promptName": "fact-presentation",
+    "requiredKeys": ["source", "headline", "summary", "nextStep", "caveat"],
+    "input": {
+      "finalEvaluation": {
+        "claim": "Government use of facial recognition violates the Fourth Amendment.",
+        "verdict": "Not enough evidence",
+        "confidence": "Low",
+        "interpretation": "The provided sources do not settle the claim."
+      },
+      "sourceEvaluation": {
+        "searchGaps": ["Find controlling Supreme Court precedent or jurisdiction-specific case law."]
+      }
     }
   }
 ]

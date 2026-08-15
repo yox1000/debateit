@@ -2736,6 +2736,7 @@ function renderTrustedFactCheck(factCheck) {
   const header = document.createElement("div");
   const verdict = document.createElement("strong");
   const confidence = document.createElement("span");
+  const presentation = factCheck.presentation || {};
   const interpretation = document.createElement("p");
 
   card.className = "trusted-fact-check";
@@ -2743,9 +2744,16 @@ function renderTrustedFactCheck(factCheck) {
   verdict.textContent = factCheck.verdict || "Not enough evidence";
   verdict.dataset.verdict = String(factCheck.verdict || "").toLowerCase().replace(/[^a-z]+/g, "-");
   confidence.textContent = `${factCheck.confidence || "Low"} confidence`;
-  interpretation.textContent = factCheck.interpretation || "No interpretation available.";
+  interpretation.textContent = presentation.summary || factCheck.interpretation || "No interpretation available.";
   header.append(verdict, confidence);
   card.append(header, interpretation);
+
+  if (presentation.nextStep || presentation.caveat) {
+    const guidance = document.createElement("p");
+    guidance.className = "fact-next-step";
+    guidance.textContent = [presentation.nextStep, presentation.caveat].filter(Boolean).join(" ");
+    card.append(guidance);
+  }
 
   if (factCheck.stats?.length) {
     const stats = document.createElement("ul");
@@ -2779,6 +2787,51 @@ function renderTrustedFactCheck(factCheck) {
       evidenceList.append(link, note);
     });
     card.append(evidenceList);
+  }
+
+  if (factCheck.sourceEvaluation?.rankedSources?.length) {
+    const ranked = document.createElement("div");
+    const title = document.createElement("strong");
+
+    ranked.className = "ranked-sources";
+    title.textContent = "Ranked sources";
+    ranked.append(title);
+
+    factCheck.sourceEvaluation.rankedSources.slice(0, 4).forEach((source) => {
+      const item = document.createElement("a");
+      const strength = document.createElement("span");
+
+      item.href = source.url || "#";
+      item.target = "_blank";
+      item.rel = "noreferrer";
+      item.textContent = `${source.provider || "Source"}: ${source.title}`;
+      strength.textContent = source.strength || "Useful context";
+      item.append(strength);
+      ranked.append(item);
+    });
+    card.append(ranked);
+  }
+
+  if (factCheck.researchTrail?.length) {
+    const trail = document.createElement("div");
+    const title = document.createElement("strong");
+
+    trail.className = "agent-trail";
+    title.textContent = "Research agents";
+    trail.append(title);
+
+    factCheck.researchTrail.forEach((step) => {
+      const item = document.createElement("div");
+      const agent = document.createElement("span");
+      const summary = document.createElement("p");
+
+      item.className = "agent-step";
+      agent.textContent = step.agent || "Agent";
+      summary.textContent = step.summary || step.details || "";
+      item.append(agent, summary);
+      trail.append(item);
+    });
+    card.append(trail);
   }
 
   if (factCheck.limitations) {

@@ -74,6 +74,9 @@ Current prompt families:
 - `copilot.closing`
 - `recap`
 - `fact-check`
+- `claim-classifier`
+- `source-evaluator`
+- `fact-presentation`
 - `citation-search`
 - `repair-json`
 
@@ -105,12 +108,20 @@ Trusted-source fact checks are available through:
 
 - `POST /api/debates/:debateId/fact-check-claim`
 
-This searches public trusted-source APIs, currently Wikipedia, Crossref, and
-OpenAlex. Legal and constitutional claims also route through CourtListener,
-Cornell LII, Oyez, and relevant government technical references when available.
-DeepSeek then interprets the claim using only the gathered source bundle. The UI
-shows verdict, confidence, interpretation, stats when available, limitations,
-and links to the source results.
+This runs a chained research workflow:
+
+1. Claim Agent classifies the claim and creates source-aware queries.
+2. Search Agent searches public trusted-source APIs, currently Wikipedia,
+   Crossref, OpenAlex, CourtListener, Cornell LII, Oyez, and relevant
+   government technical references when available.
+3. Source Agent ranks the retrieved sources by relevance and authority.
+4. Evaluation Agent asks DeepSeek to interpret the claim using only the gathered
+   source bundle.
+5. Presentation Agent turns the result into a concise Facts tab summary.
+
+The UI shows verdict, confidence, interpretation, next step, stats when
+available, ranked sources, the research-agent trail, limitations, and source
+links.
 
 ## Database API
 
