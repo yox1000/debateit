@@ -1679,6 +1679,66 @@ h1 {
   color: var(--muted);
 }
 
+.copilot-disclosure {
+  border: 1px solid rgba(52, 82, 119, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  overflow: hidden;
+}
+
+.copilot-disclosure summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 10px;
+  color: var(--blue-dark);
+  font-size: 0.84rem;
+  font-weight: 900;
+  cursor: pointer;
+  list-style: none;
+}
+
+.copilot-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.copilot-disclosure summary::before {
+  content: "+";
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  color: var(--blue-dark);
+  background: rgba(232, 242, 255, 0.96);
+  font-size: 0.84rem;
+  line-height: 1;
+}
+
+.copilot-disclosure[open] summary::before {
+  content: "-";
+}
+
+.copilot-disclosure summary span:first-child {
+  flex: 1;
+}
+
+.copilot-disclosure summary span:last-child {
+  min-width: 22px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(248, 251, 253, 0.92);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.copilot-disclosure > :not(summary) {
+  margin: 0 10px 10px;
+}
+
 .ai-label {
   width: fit-content;
   padding: 4px 7px;
@@ -1693,14 +1753,31 @@ h1 {
 .unanswered-claim {
   display: grid;
   gap: 4px;
-  padding-top: 8px;
+  padding: 8px 0;
   border-top: 1px solid rgba(52, 82, 119, 0.1);
+}
+
+.unanswered-list .unanswered-claim:first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 
 .unanswered-claim span {
   color: var(--blue-dark);
   font-size: 0.8rem;
   font-weight: 800;
+}
+
+.debate-recap-content {
+  display: grid;
+  gap: 8px;
+}
+
+.debate-recap-content p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .annotation-notes {

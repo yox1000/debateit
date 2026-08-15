@@ -2520,6 +2520,22 @@ function renderCopilotList(items, className = "copilot-list") {
   return list;
 }
 
+function renderDisclosureSection({ title, count = 0, children = [], open = false }) {
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  const label = document.createElement("span");
+  const badge = document.createElement("span");
+
+  details.className = "copilot-disclosure";
+  details.open = open;
+  label.textContent = title;
+  badge.textContent = String(count);
+  summary.append(label, badge);
+  details.append(summary, ...children);
+
+  return details;
+}
+
 function renderAiNotes(state) {
   const wrap = document.createElement("div");
   const summary = document.createElement("article");
@@ -2537,22 +2553,17 @@ function renderAiNotes(state) {
   wrap.append(summary);
 
   if (state.phaseSummary.keyClaims?.length) {
-    const claims = document.createElement("article");
-    const heading = document.createElement("strong");
-
-    claims.className = "ai-card";
-    heading.textContent = "Key claims";
-    claims.append(heading, renderCopilotList(state.phaseSummary.keyClaims.slice(0, 4)));
-    wrap.append(claims);
+    wrap.append(renderDisclosureSection({
+      title: "Key claims",
+      count: state.phaseSummary.keyClaims.length,
+      children: [renderCopilotList(state.phaseSummary.keyClaims.slice(0, 4))],
+    }));
   }
 
   if (state.unansweredClaims.length) {
-    const unresolved = document.createElement("article");
-    const heading = document.createElement("strong");
+    const unresolvedList = document.createElement("div");
 
-    unresolved.className = "ai-card";
-    heading.textContent = "Unanswered";
-    unresolved.append(heading);
+    unresolvedList.className = "unanswered-list";
 
     state.unansweredClaims.slice(0, 3).forEach((item) => {
       const card = document.createElement("div");
@@ -2563,10 +2574,14 @@ function renderAiNotes(state) {
       claim.textContent = `${item.from || "Speaker"}: ${item.claim || ""}`;
       response.textContent = item.suggestedResponse || item.whyItMatters || "Answer this before moving on.";
       card.append(claim, response);
-      unresolved.append(card);
+      unresolvedList.append(card);
     });
 
-    wrap.append(unresolved);
+    wrap.append(renderDisclosureSection({
+      title: "Unanswered",
+      count: state.unansweredClaims.length,
+      children: [unresolvedList],
+    }));
   }
 
   if (state.recap) {
@@ -2577,22 +2592,25 @@ function renderAiNotes(state) {
 }
 
 function renderDebateRecap(recap) {
-  const card = document.createElement("article");
-  const heading = document.createElement("strong");
+  const content = document.createElement("div");
   const xp = document.createElement("p");
   const civility = document.createElement("p");
+  const children = [content];
 
-  card.className = "ai-card debate-recap-card";
-  heading.textContent = "Post-debate review";
+  content.className = "debate-recap-content";
   xp.textContent = recap.xpNotes || "XP review pending.";
   civility.textContent = recap.civilityNotes || "Civility review pending.";
-  card.append(heading, xp, civility);
+  content.append(xp, civility);
 
   if (recap.nextSteps?.length) {
-    card.append(renderCopilotList(recap.nextSteps.slice(0, 4)));
+    children.push(renderCopilotList(recap.nextSteps.slice(0, 4)));
   }
 
-  return card;
+  return renderDisclosureSection({
+    title: "Post-debate review",
+    count: 2 + (recap.nextSteps?.length || 0),
+    children,
+  });
 }
 
 function renderCopilotFacts(factChecks) {
