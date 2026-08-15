@@ -1599,6 +1599,18 @@ h1 {
   font-size: 1.05rem;
 }
 
+.copilot-actions {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+
+.copilot-actions .compact-button {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 0.76rem;
+}
+
 .copilot-tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1629,9 +1641,72 @@ h1 {
   min-height: 220px;
 }
 
+.copilot-loading {
+  margin: 0 0 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(51, 95, 159, 0.16);
+  border-radius: 8px;
+  color: var(--blue-dark);
+  background: rgba(232, 242, 255, 0.8);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.ai-section {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-card {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid rgba(52, 82, 119, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.ai-card strong {
+  color: var(--blue-dark);
+  font-size: 0.88rem;
+}
+
+.ai-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.ai-label {
+  width: fit-content;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: var(--teal);
+  background: rgba(232, 247, 246, 0.86);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.unanswered-claim {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(52, 82, 119, 0.1);
+}
+
+.unanswered-claim span {
+  color: var(--blue-dark);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
 .annotation-notes {
   display: grid;
   gap: 10px;
+  margin-top: 10px;
 }
 
 .annotation-editor {
@@ -1760,6 +1835,14 @@ h1 {
   text-transform: uppercase;
 }
 
+.fact-list span[data-status="likely-supported"] {
+  color: var(--teal);
+}
+
+.fact-list span[data-status="opinion-value-claim"] {
+  color: var(--muted);
+}
+
 .fact-list p {
   margin: 0;
   color: var(--muted);
@@ -1768,10 +1851,20 @@ h1 {
 }
 
 .focus-card {
+  display: grid;
+  gap: 7px;
   border-color: rgba(32, 120, 126, 0.2);
   background: rgba(232, 247, 246, 0.86);
   color: var(--blue-dark);
   font-weight: 800;
+}
+
+.focus-card p,
+.focus-card span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 @media (max-width: 900px) {

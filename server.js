@@ -374,6 +374,186 @@ async function createDeepSeekMatches(payload) {
   };
 }
 
+function normalizeTranscript(messages = []) {
+  return messages
+    .filter((message) => message.text?.trim())
+    .slice(-28)
+    .map((message) => ({
+      id: message.id,
+      speaker: message.speaker === "system" ? "System" : message.authorName || "Debater",
+      text: message.text,
+      at: message.at,
+    }));
+}
+
+function createTranscriptHash({ debate, messages }) {
+  return crypto
+    .createHash("sha1")
+    .update(JSON.stringify({
+      debateId: debate.id,
+      turnIndex: debate.turnState?.turnIndex,
+      messages: messages.map((message) => [message.id, message.userId, message.text]),
+    }))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function createLocalCopilotAnalysis({ debate, messages }) {
+  const transcript = normalizeTranscript(messages);
+  const debateMessages = transcript.filter((message) => message.speaker !== "System");
+  const latest = debateMessages.at(-1);
+  const claimWords = ["study", "studies", "data", "evidence", "research", "percent", "%", "always", "never", "proves"];
+  const claimMessages = debateMessages.filter((message) =>
+    claimWords.some((word) => message.text.toLowerCase().includes(word)),
+  );
+  const opponent = debate.participants.find((participant) => participant.userId !== debate.turnState?.turnUserId);
+
+  return {
+    source: "local",
+    phaseSummary: {
+      phase: debate.turnState?.phaseLabel || "Current phase",
+      summary: latest
+        ? `${latest.speaker} most recently argued: ${latest.text.slice(0, 140)}${latest.text.length > 140 ? "..." : ""}`
+        : "No substantive debate messages yet.",
+      speakerProgress: debate.participants.map((participant) => ({
+        speaker: participant.name,
+        progress: "Waiting for more material before judging progress.",
+      })),
+      keyClaims: debateMessages.slice(-4).map((message) => `${message.speaker}: ${message.text.slice(0, 120)}`),
+    },
+    unansweredClaims: latest
+      ? [
+          {
+            from: latest.speaker,
+            claim: latest.text.slice(0, 160),
+            whyItMatters: "This is the most recent point and should be answered directly.",
+            suggestedResponse: "Restate the claim, accept or challenge its premise, then give one reason.",
+          },
+        ]
+      : [],
+    crossQuestions: [
+      {
+        target: opponent?.name || "Opponent",
+        question: "What evidence would change your position on this topic?",
+        purpose: "Clarifies standards of proof before the debate drifts.",
+      },
+    ],
+    factChecks: claimMessages.slice(-4).map((message) => ({
+      speaker: message.speaker,
+      claim: message.text.slice(0, 180),
+      status: "Needs source",
+      reasoning: "The claim uses factual or evidence language and should be sourced before being treated as established.",
+      suggestedSourceType: "Primary source, study, official statistic, or reputable report.",
+    })),
+    focus: {
+      priority: debate.turnState?.turnUserName
+        ? `${debate.turnState.turnUserName} should answer the strongest recent claim before adding a new argument.`
+        : "Keep the next response tied to the current phase.",
+      nextMove: debate.turnState?.phaseKey === "cross-question"
+        ? "Ask one narrow question that exposes an assumption."
+        : "Make one claim, give one reason, and connect it to the debate topic.",
+      driftWarning: "Avoid changing topics unless you explicitly explain why the new point matters.",
+    },
+  };
+}
+
+function createCopilotPromptPayload({ debate, messages }) {
+  return {
+    product: "Debate.it",
+    debate: {
+      topic: debate.topicTitle,
+      status: debate.status,
+      currentPhase: debate.turnState?.phaseLabel,
+      currentSpeaker: debate.turnState?.turnUserName,
+      participants: debate.participants.map((participant) => ({
+        name: participant.name,
+        stance: participant.stance,
+      })),
+    },
+    promptEngineering: {
+      phaseSummary:
+        "Summarize only the current debate phase and the phase-relevant progress each side has made. Do not score who is winning.",
+      unansweredClaims:
+        "Identify claims or challenges that have not yet been directly answered. Prefer the strongest unresolved point over every minor point.",
+      crossQuestions:
+        "Generate concise cross-question prompts that are neutral, specific, and hard to dodge. Do not write speeches.",
+      factCheckTriage:
+        "Flag factual claims for verification. Since you cannot browse, do not invent citations. Use only these statuses: Needs source, Likely supported, Questionable, Opinion/Value claim.",
+      focusGuard:
+        "Give one next-move recommendation that keeps the current speaker inside the active debate phase and prevents topic drift.",
+    },
+    transcript: normalizeTranscript(messages),
+  };
+}
+
+function validateCopilotAnalysis(analysis) {
+  return {
+    source: analysis.source || "deepseek",
+    phaseSummary: {
+      phase: analysis.phaseSummary?.phase || "Current phase",
+      summary: analysis.phaseSummary?.summary || "No summary available.",
+      speakerProgress: Array.isArray(analysis.phaseSummary?.speakerProgress)
+        ? analysis.phaseSummary.speakerProgress.slice(0, 4)
+        : [],
+      keyClaims: Array.isArray(analysis.phaseSummary?.keyClaims) ? analysis.phaseSummary.keyClaims.slice(0, 6) : [],
+    },
+    unansweredClaims: Array.isArray(analysis.unansweredClaims) ? analysis.unansweredClaims.slice(0, 5) : [],
+    crossQuestions: Array.isArray(analysis.crossQuestions) ? analysis.crossQuestions.slice(0, 5) : [],
+    factChecks: Array.isArray(analysis.factChecks) ? analysis.factChecks.slice(0, 6) : [],
+    focus: {
+      priority: analysis.focus?.priority || "Answer the current phase prompt directly.",
+      nextMove: analysis.focus?.nextMove || "Make one clear claim and support it.",
+      driftWarning: analysis.focus?.driftWarning || "Avoid drifting away from the debate topic.",
+    },
+  };
+}
+
+async function createDeepSeekCopilotAnalysis(payload) {
+  if (!deepSeekApiKey) {
+    return createLocalCopilotAnalysis(payload);
+  }
+
+  const apiResponse = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${deepSeekApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: deepSeekModel,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are Debate.it's live AI co-pilot for a structured 1v1 debate. Return only valid JSON with keys: source, phaseSummary, unansweredClaims, crossQuestions, factChecks, focus. Be neutral. Do not decide a winner. Do not invent citations or claim live verification. For factChecks, perform triage only and use statuses exactly from the user payload.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify(createCopilotPromptPayload(payload)),
+        },
+      ],
+      temperature: 0.2,
+      stream: false,
+    }),
+  });
+
+  if (!apiResponse.ok) {
+    const errorText = await apiResponse.text();
+    throw new Error(`DeepSeek co-pilot request failed: ${apiResponse.status} ${errorText}`);
+  }
+
+  const data = await apiResponse.json();
+  const content = data.choices?.[0]?.message?.content || "";
+  const analysis = parseJsonContent(content);
+
+  if (!analysis) {
+    throw new Error("DeepSeek returned non-JSON co-pilot content");
+  }
+
+  return validateCopilotAnalysis({ ...analysis, source: "deepseek" });
+}
+
 function serveStatic(request, response) {
   const requestUrl = new URL(request.url, `http://${request.headers.host}`);
   const pathname = decodeURIComponent(requestUrl.pathname);
@@ -926,6 +1106,7 @@ const server = http.createServer(async (request, response) => {
 
   const messagesMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/messages$/);
   const debateStateMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/state$/);
+  const copilotMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/copilot$/);
 
   if (request.method === "GET" && debateStateMatch) {
     const user = requireDebateParticipant(request, response, debateStateMatch[1]);
@@ -984,6 +1165,59 @@ const server = http.createServer(async (request, response) => {
       }
       return;
     }
+  }
+
+  if (request.method === "POST" && copilotMatch) {
+    try {
+      const user = requireDebateParticipant(request, response, copilotMatch[1]);
+
+      if (!user) {
+        return;
+      }
+
+      const debate = database.getDebateContext(copilotMatch[1]);
+      const messages = database.listMessages(copilotMatch[1]);
+      const transcriptHash = createTranscriptHash({ debate, messages });
+      const cached = database.getAiInsight(copilotMatch[1], "copilot", transcriptHash);
+
+      if (cached?.payload) {
+        sendJson(response, 200, { analysis: cached.payload, cached: true, transcriptHash });
+        return;
+      }
+
+      const analysis = await createDeepSeekCopilotAnalysis({ debate, messages, user });
+      database.saveAiInsight({
+        debateId: copilotMatch[1],
+        insightType: "copilot",
+        transcriptHash,
+        payload: analysis,
+      });
+      sendJson(response, 200, { analysis, cached: false, transcriptHash });
+      broadcastDebate(copilotMatch[1], {
+        type: "copilot_analysis",
+        debateId: copilotMatch[1],
+        analysis,
+        transcriptHash,
+      });
+    } catch (error) {
+      try {
+        const debate = database.getDebateContext(copilotMatch[1]);
+        const messages = database.listMessages(copilotMatch[1]);
+
+        if (!debate) {
+          throw error;
+        }
+
+        sendJson(response, 200, {
+          analysis: createLocalCopilotAnalysis({ debate, messages }),
+          cached: false,
+          fallback: true,
+        });
+      } catch {
+        sendError(response, error);
+      }
+    }
+    return;
   }
 
   const annotationsMatch = requestUrl.pathname.match(/^\/api\/debates\/([^/]+)\/annotations$/);

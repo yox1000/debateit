@@ -199,6 +199,15 @@ function initDatabase() {
       expires_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS ai_insights (
+      id TEXT PRIMARY KEY,
+      debate_id TEXT NOT NULL REFERENCES debates(id) ON DELETE CASCADE,
+      insight_type TEXT NOT NULL,
+      transcript_hash TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_match_requests_lookup
       ON match_requests(topic_id, stance, status);
     CREATE INDEX IF NOT EXISTS idx_sessions_user
@@ -209,6 +218,8 @@ function initDatabase() {
       ON chat_messages(debate_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_annotations_debate
       ON annotations(debate_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_insights_lookup
+      ON ai_insights(debate_id, insight_type, transcript_hash);
   `);
 
   ensureColumn("match_requests", "metadata_json", "TEXT NOT NULL DEFAULT '{}'");
@@ -439,6 +450,24 @@ function listDebateParticipants(debateId) {
 
 function getDebateRow(debateId) {
   return db.prepare("SELECT * FROM debates WHERE id = ?").get(debateId);
+}
+
+function getDebateContext(debateId) {
+  const row = getDebateRow(debateId);
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    proposalId: row.proposal_id,
+    topicId: row.topic_id,
+    topicTitle: row.topic_title,
+    status: row.status,
+    turnState: getDebateTurnState(debateId),
+    participants: listDebateParticipants(debateId),
+  };
 }
 
 function getPhaseByTurnIndex(turnIndex, participantCount = 2) {
@@ -828,6 +857,7 @@ function getUserStats(userId) {
 
 function clearDebateRuntimeData() {
   db.exec(`
+    DELETE FROM ai_insights;
     DELETE FROM annotations;
     DELETE FROM chat_messages;
     DELETE FROM debate_participants;
@@ -1079,6 +1109,38 @@ function createAnnotation({ debateId, messageId, userId, speaker, start, end, qu
   return listAnnotations(debateId).find((annotation) => annotation.id === id);
 }
 
+function getAiInsight(debateId, insightType, transcriptHash) {
+  const row = db
+    .prepare(`
+      SELECT payload_json, created_at
+      FROM ai_insights
+      WHERE debate_id = ? AND insight_type = ? AND transcript_hash = ?
+    `)
+    .get(debateId, insightType, transcriptHash);
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    payload: parseJson(row.payload_json, null),
+    createdAt: row.created_at,
+  };
+}
+
+function saveAiInsight({ debateId, insightType, transcriptHash, payload }) {
+  const id = createId("insight");
+  const createdAt = nowIso();
+
+  db.prepare(`
+    INSERT OR REPLACE INTO ai_insights (
+      id, debate_id, insight_type, transcript_hash, payload_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, debateId, insightType, transcriptHash, json(payload, {}), createdAt);
+
+  return getAiInsight(debateId, insightType, transcriptHash);
+}
+
 function getStatus() {
   const tables = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -1111,6 +1173,8 @@ module.exports = {
   listDebateParticipantIds,
   listDebateParticipants,
   getStatus,
+  getAiInsight,
+  getDebateContext,
   getDebateTurnState,
   getUserByCredentials,
   getUserById,
@@ -1121,5 +1185,6 @@ module.exports = {
   listMessages,
   listProposalsForUser,
   rejectProposal,
+  saveAiInsight,
   updateUserProfile,
 };

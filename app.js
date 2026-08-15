@@ -59,6 +59,8 @@ const micButton = document.querySelector("#mic-button");
 const turnStatus = document.querySelector("#turn-status");
 const copilotTabs = document.querySelectorAll(".copilot-tab");
 const copilotContent = document.querySelector("#copilot-content");
+const copilotSource = document.querySelector("#copilot-source");
+const runCopilotButton = document.querySelector("#run-copilot");
 const debateCategory = document.querySelector("#debate-category");
 const debateTitle = document.querySelector("#debate-title");
 const debateTags = document.querySelector("#debate-tags");
@@ -155,6 +157,10 @@ let activeHeaderPanel = "";
 let debateFilters = new Set();
 let activeRoomDebateId = "";
 let activeCopilotTab = "notes";
+let activeCopilotAnalysis = null;
+let copilotAnalysisCache = new Map();
+let copilotLoading = false;
+let copilotAnalyzeTimeout = 0;
 let pendingAnnotationSelection = null;
 let statePollId = 0;
 let documentGlowTimeout = 0;
@@ -415,6 +421,20 @@ async function handleRealtimeEvent(event) {
     return;
   }
 
+  if (event.type === "copilot_analysis") {
+    if (event.debateId === activeRoomDebateId) {
+      const debate = getLocalDebates().find((candidate) => candidate.id === activeRoomDebateId);
+
+      activeCopilotAnalysis = event.analysis;
+      copilotAnalysisCache.set(getCopilotCacheKey(event.debateId), event.analysis);
+
+      if (debate) {
+        renderCopilot(getChatMessages(event.debateId), debate);
+      }
+    }
+    return;
+  }
+
   if (event.type === "proposal_rejected" || event.type === "match_request_cancelled") {
     await refreshUserState(false);
     refreshOpenRealtimeViews();
@@ -443,6 +463,8 @@ async function handleRealtimeEvent(event) {
       } else {
         turnStatus.textContent = role === "opponent" ? "Your turn" : "Waiting for opponent";
       }
+
+      scheduleCopilotAnalysis(event.debateId);
     }
     return;
   }
@@ -450,6 +472,9 @@ async function handleRealtimeEvent(event) {
   if (event.type === "debate_state") {
     setDebateState(event.debateId, event.debateState);
     refreshOpenRealtimeViews();
+    if (event.debateId === activeRoomDebateId) {
+      scheduleCopilotAnalysis(event.debateId);
+    }
     return;
   }
 
@@ -1663,6 +1688,9 @@ function leaveActiveRoom() {
   }
 
   activeDebateState = null;
+  activeCopilotAnalysis = null;
+  copilotLoading = false;
+  window.clearTimeout(copilotAnalyzeTimeout);
   window.clearInterval(turnTimerInterval);
 }
 
@@ -1795,6 +1823,7 @@ async function showDebateRoom(debateId) {
   renderDebateState(activeDebateState);
   sendRealtime({ type: "join_room", debateId });
   renderChatThread(debate);
+  loadCopilotAnalysis(debateId, false).catch(() => {});
   notificationPanel.hidden = true;
   authView.hidden = true;
   appView.hidden = true;
@@ -2048,6 +2077,92 @@ function formatMessageTime(value) {
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+function getCopilotSignature(debateId = activeRoomDebateId) {
+  const messages = getChatMessages(debateId);
+  const debate = getLocalDebates().find((candidate) => candidate.id === debateId);
+  const state = debate?.turnState || activeDebateState || {};
+
+  return JSON.stringify({
+    debateId,
+    turnIndex: state.turnIndex ?? null,
+    phase: state.phaseKey || "",
+    messageIds: messages.map((message) => message.id),
+  });
+}
+
+function getCopilotCacheKey(debateId = activeRoomDebateId) {
+  return `${debateId}:${getCopilotSignature(debateId)}`;
+}
+
+function formatCopilotSource(source = "local") {
+  return source === "deepseek" ? "DeepSeek" : source === "local" ? "Local" : source;
+}
+
+async function loadCopilotAnalysis(debateId = activeRoomDebateId, force = false) {
+  if (!debateId) {
+    return null;
+  }
+
+  const debate = getLocalDebates().find((candidate) => candidate.id === debateId);
+
+  if (!debate) {
+    return null;
+  }
+
+  const cacheKey = getCopilotCacheKey(debateId);
+
+  if (!force && copilotAnalysisCache.has(cacheKey)) {
+    activeCopilotAnalysis = copilotAnalysisCache.get(cacheKey);
+    renderCopilot(getChatMessages(debateId), debate);
+    return activeCopilotAnalysis;
+  }
+
+  if (activeRoomDebateId === debateId) {
+    activeCopilotAnalysis = null;
+  }
+
+  copilotLoading = true;
+  renderCopilot(getChatMessages(debateId), debate);
+
+  try {
+    const { analysis } = await apiRequest(`/api/debates/${encodeURIComponent(debateId)}/copilot`, {
+      method: "POST",
+      body: JSON.stringify({ force }),
+    });
+
+    if (activeRoomDebateId !== debateId) {
+      return analysis;
+    }
+
+    activeCopilotAnalysis = analysis;
+    copilotAnalysisCache.set(cacheKey, analysis);
+    renderCopilot(getChatMessages(debateId), debate);
+    return analysis;
+  } catch (error) {
+    if (activeRoomDebateId === debateId) {
+      activeCopilotAnalysis = null;
+      renderCopilot(getChatMessages(debateId), debate);
+    }
+    return null;
+  } finally {
+    if (activeRoomDebateId === debateId) {
+      copilotLoading = false;
+      renderCopilot(getChatMessages(debateId), debate);
+    }
+  }
+}
+
+function scheduleCopilotAnalysis(debateId = activeRoomDebateId) {
+  if (!debateId) {
+    return;
+  }
+
+  window.clearTimeout(copilotAnalyzeTimeout);
+  copilotAnalyzeTimeout = window.setTimeout(() => {
+    loadCopilotAnalysis(debateId, false).catch(() => {});
+  }, 900);
+}
+
 function renderChatThread(debate) {
   const messages = getChatMessages(debate.id);
   renderDebateState(getActiveDebate()?.turnState || debate.turnState || activeDebateState);
@@ -2109,6 +2224,7 @@ async function addChatMessage(speaker, text) {
       renderChatThread(debate);
     }
 
+    scheduleCopilotAnalysis(activeRoomDebateId);
     return true;
   } catch (error) {
     turnStatus.textContent = error.message || "Could not send message.";
@@ -2159,27 +2275,49 @@ function buildCopilotState(messages, debate = {}) {
   const last = debateMessages.at(-1);
   const side = getDebateSide(debate.detail);
   const unansweredOpponent = [...debateMessages].reverse().find((message) => getMessageRole(message) === "opponent");
-  const notes = recent.length
+  const analysis = activeCopilotAnalysis || {};
+  const localNotes = recent.length
     ? recent.map(summarizeMessage)
     : [`You are arguing ${side}. Start with one clear claim and one reason.`];
-  const factChecks = findFactSignals(messages);
-  const focus =
+  const fallbackFocus =
     getMessageRole(last || {}) === "opponent"
-      ? "Answer the opponent's last point directly before adding a new argument."
+      ? {
+          priority: "Answer the opponent's last point directly before adding a new argument.",
+          nextMove: "Quote or paraphrase the claim, then respond with one supported reason.",
+          driftWarning: "Do not switch to a new topic until the direct answer is clear.",
+        }
       : unansweredOpponent
-        ? "Tie your next point back to the strongest opponent claim so the debate does not drift."
-        : `State the clearest reason for ${side}, then define what would count as evidence.`;
+        ? {
+            priority: "Tie your next point back to the strongest opponent claim so the debate does not drift.",
+            nextMove: "Name the disputed claim and explain the tradeoff.",
+            driftWarning: "Avoid stacking unrelated points.",
+          }
+        : {
+            priority: `State the clearest reason for ${side}.`,
+            nextMove: "Define what evidence would support your side.",
+            driftWarning: "Keep the next message inside the current debate phase.",
+          };
 
   return {
-    notes,
-    factChecks,
-    focus,
+    source: analysis.source || "local",
+    phaseSummary: analysis.phaseSummary || {
+      phase: activeDebateState?.phaseLabel || "Current phase",
+      summary: localNotes[0],
+      speakerProgress: [],
+      keyClaims: localNotes,
+    },
+    unansweredClaims: Array.isArray(analysis.unansweredClaims) ? analysis.unansweredClaims : [],
+    crossQuestions: Array.isArray(analysis.crossQuestions) ? analysis.crossQuestions : [],
+    factChecks: Array.isArray(analysis.factChecks) && analysis.factChecks.length
+      ? analysis.factChecks
+      : findFactSignals(messages),
+    focus: analysis.focus || fallbackFocus,
   };
 }
 
-function renderCopilotList(items) {
+function renderCopilotList(items, className = "copilot-list") {
   const list = document.createElement("ul");
-  list.className = "copilot-list";
+  list.className = className;
 
   items.forEach((item) => {
     const row = document.createElement("li");
@@ -2188,6 +2326,58 @@ function renderCopilotList(items) {
   });
 
   return list;
+}
+
+function renderAiNotes(state) {
+  const wrap = document.createElement("div");
+  const summary = document.createElement("article");
+  const phase = document.createElement("span");
+  const title = document.createElement("strong");
+  const text = document.createElement("p");
+
+  wrap.className = "ai-section";
+  summary.className = "ai-card";
+  phase.className = "ai-label";
+  phase.textContent = state.phaseSummary.phase || "Current phase";
+  title.textContent = "Phase notes";
+  text.textContent = state.phaseSummary.summary || "No AI phase notes yet.";
+  summary.append(phase, title, text);
+  wrap.append(summary);
+
+  if (state.phaseSummary.keyClaims?.length) {
+    const claims = document.createElement("article");
+    const heading = document.createElement("strong");
+
+    claims.className = "ai-card";
+    heading.textContent = "Key claims";
+    claims.append(heading, renderCopilotList(state.phaseSummary.keyClaims.slice(0, 4)));
+    wrap.append(claims);
+  }
+
+  if (state.unansweredClaims.length) {
+    const unresolved = document.createElement("article");
+    const heading = document.createElement("strong");
+
+    unresolved.className = "ai-card";
+    heading.textContent = "Unanswered";
+    unresolved.append(heading);
+
+    state.unansweredClaims.slice(0, 3).forEach((item) => {
+      const card = document.createElement("div");
+      const claim = document.createElement("p");
+      const response = document.createElement("span");
+
+      card.className = "unanswered-claim";
+      claim.textContent = `${item.from || "Speaker"}: ${item.claim || ""}`;
+      response.textContent = item.suggestedResponse || item.whyItMatters || "Answer this before moving on.";
+      card.append(claim, response);
+      unresolved.append(card);
+    });
+
+    wrap.append(unresolved);
+  }
+
+  return wrap;
 }
 
 function renderCopilotFacts(factChecks) {
@@ -2202,12 +2392,48 @@ function renderCopilotFacts(factChecks) {
 
     claim.textContent = fact.claim;
     status.textContent = fact.status;
-    question.textContent = fact.question;
+    status.dataset.status = String(fact.status || "").toLowerCase().replace(/[^a-z]+/g, "-");
+    question.textContent = fact.question || fact.reasoning || fact.suggestedSourceType || "Ask for a source before treating this as established.";
     card.append(claim, status, question);
     list.append(card);
   });
 
   return list;
+}
+
+function renderCopilotFocus(state) {
+  const wrap = document.createElement("div");
+  const focus = document.createElement("article");
+  const priority = document.createElement("strong");
+  const nextMove = document.createElement("p");
+  const drift = document.createElement("span");
+
+  wrap.className = "ai-section";
+  focus.className = "focus-card";
+  priority.textContent = state.focus.priority || "Answer the current phase prompt directly.";
+  nextMove.textContent = state.focus.nextMove || "Make one clear claim and support it.";
+  drift.textContent = state.focus.driftWarning || "Avoid drifting away from the debate topic.";
+  focus.append(priority, nextMove, drift);
+  wrap.append(focus);
+
+  if (state.crossQuestions.length) {
+    const questions = document.createElement("article");
+    const heading = document.createElement("strong");
+
+    questions.className = "ai-card";
+    heading.textContent = "Cross-questions";
+    questions.append(heading);
+
+    state.crossQuestions.slice(0, 4).forEach((item) => {
+      const question = document.createElement("p");
+      question.textContent = item.question || String(item);
+      questions.append(question);
+    });
+
+    wrap.append(questions);
+  }
+
+  return wrap;
 }
 
 function renderAnnotationNotes() {
@@ -2283,6 +2509,15 @@ function renderAnnotationNotes() {
 function renderCopilot(messages, debate = {}) {
   const state = buildCopilotState(messages, debate);
 
+  if (copilotSource) {
+    copilotSource.textContent = copilotLoading ? "Analyzing" : formatCopilotSource(state.source);
+  }
+
+  if (runCopilotButton) {
+    runCopilotButton.disabled = copilotLoading || !activeRoomDebateId;
+    runCopilotButton.textContent = copilotLoading ? "Analyzing" : "Analyze";
+  }
+
   copilotTabs.forEach((tab) => {
     const isActive = tab.dataset.copilotTab === activeCopilotTab;
     tab.classList.toggle("active", isActive);
@@ -2292,19 +2527,34 @@ function renderCopilot(messages, debate = {}) {
   copilotContent.replaceChildren();
 
   if (activeCopilotTab === "facts") {
+    if (copilotLoading) {
+      const loading = document.createElement("p");
+      loading.className = "copilot-loading";
+      loading.textContent = "Checking factual claims...";
+      copilotContent.append(loading);
+    }
     copilotContent.append(renderCopilotFacts(state.factChecks));
     return;
   }
 
   if (activeCopilotTab === "focus") {
-    const card = document.createElement("div");
-    card.className = "focus-card";
-    card.textContent = state.focus;
-    copilotContent.append(card);
+    if (copilotLoading) {
+      const loading = document.createElement("p");
+      loading.className = "copilot-loading";
+      loading.textContent = "Building next-move guidance...";
+      copilotContent.append(loading);
+    }
+    copilotContent.append(renderCopilotFocus(state));
     return;
   }
 
-  copilotContent.append(renderAnnotationNotes());
+  if (copilotLoading) {
+    const loading = document.createElement("p");
+    loading.className = "copilot-loading";
+    loading.textContent = "Summarizing this phase...";
+    copilotContent.append(loading);
+  }
+  copilotContent.append(renderAiNotes(state), renderAnnotationNotes());
 }
 
 function startSpeechToText() {
@@ -2780,6 +3030,10 @@ copilotTabs.forEach((tab) => {
     activeCopilotTab = tab.dataset.copilotTab;
     renderCopilot(getChatMessages(activeRoomDebateId), debate);
   });
+});
+
+runCopilotButton.addEventListener("click", () => {
+  loadCopilotAnalysis(activeRoomDebateId, true).catch(() => {});
 });
 
 document.addEventListener("click", (event) => {
