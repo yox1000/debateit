@@ -244,10 +244,22 @@ function getStarterOpenRooms() {
   }));
 }
 
+function getRoomConfig(room = {}) {
+  return {
+    sourceRoomId: room.id || room.sourceRoomId || "",
+    visibility: room.visibility || "Public",
+    format: room.format || "1v1",
+    sideSize: String(room.sideSize || room.side_size || "1"),
+    pace: room.pace || "Timed rounds",
+    evidence: room.evidence || "Evidence encouraged",
+  };
+}
+
 function listVisibleOpenRooms(userId = "") {
   return [...database.listOpenRoomsForUser(userId), ...getStarterOpenRooms()]
     .map((room) => ({
       ...room,
+      roomConfig: room.roomConfig || getRoomConfig(room),
       friendHost: database.getFriendStatus(userId, room.hostUserId) === "friends",
     }))
     .sort((a, b) => Number(Boolean(b.friendHost)) - Number(Boolean(a.friendHost)) || new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
@@ -2149,6 +2161,8 @@ const server = http.createServer(async (request, response) => {
         topicId: payload.topicId,
         topicTitle: payload.topicTitle,
         stance: payload.stance,
+        sourceRoomId: payload.sourceRoomId || payload.roomConfig?.sourceRoomId || "",
+        roomConfig: payload.roomConfig || {},
         metadata: {
           topicCategory: payload.topicCategory || "",
           topicTags: payload.topicTags || [],

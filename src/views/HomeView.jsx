@@ -5,16 +5,31 @@ import { apiRequest } from "../lib/api.js";
 import { cleanSearchQuery, fuzzyTopicSearch } from "../utils/fuzzySearch.js";
 
 function getSuggestionMeta(suggestion) {
-  const prefix = suggestion.kind === "room"
-    ? `${suggestion.room?.friendHost ? "Friend room" : "Open room"} - Needs ${suggestion.room?.need || "opponent"}`
-    : ["Related", "Semantic", "Friend room"].includes(suggestion.topic.matchType)
-      ? suggestion.topic.matchType
-      : suggestion.topic.category;
+  if (suggestion.kind === "room") {
+    return [
+      `Room waiting for ${suggestion.room?.need || "opponent"}`,
+      suggestion.room?.visibility || "Public",
+      suggestion.room?.pace || "Timed rounds",
+      `${suggestion.topic.searchScore}% match`,
+    ].filter(Boolean).join(" - ");
+  }
+
+  const prefix = ["Related", "Semantic", "Friend room"].includes(suggestion.topic.matchType)
+    ? suggestion.topic.matchType
+    : suggestion.topic.category;
   const concepts = suggestion.topic.matchType === "Related" && suggestion.topic.sharedConcepts?.length
     ? ` - ${suggestion.topic.sharedConcepts.slice(0, 2).join(", ")}`
     : "";
 
-  return `${prefix}${concepts} - ${suggestion.topic.searchScore}% match`;
+  return `Topic idea - ${prefix}${concepts} - choose a side or create a room`;
+}
+
+function getSuggestionActionLabel(suggestion) {
+  return suggestion.kind === "room" ? "Join" : "Explore";
+}
+
+function isDirectRoomSupported(room = {}) {
+  return String(room.sideSize || room.roomConfig?.sideSize || "1") === "1";
 }
 
 function getMeaningfulTerms(query = "") {
@@ -42,14 +57,31 @@ function shouldRequestSemanticSearch(query, localSuggestions) {
   return !(top.matchType === "Text match" && top.searchScore >= 82);
 }
 
+function scoreRecommendedRoom(room, topicMatches = []) {
+  const title = String(room.topic || "").toLowerCase();
+  const category = String(room.category || "").toLowerCase();
+  const matchedTopic = topicMatches.find((match) => {
+    const matchTitle = String(match.title || "").toLowerCase();
+    const matchCategory = String(match.category || "").toLowerCase();
+
+    return matchTitle === title || (matchCategory && matchCategory === category);
+  });
+  const recommendationScore = matchedTopic ? Number(matchedTopic.score || 0) : 0;
+  const friendBoost = room.friendHost ? 18 : 0;
+  const publicBoost = room.visibility === "Public" ? 4 : 0;
+
+  return recommendationScore + friendBoost + publicBoost;
+}
+
 export default function HomeView({ topics, matches, matchSource, debates, openRooms, onTopic, onOpenDebate, onCreate }) {
   const [query, setQuery] = useState("");
   const [semanticSearch, setSemanticSearch] = useState({ query: "", source: "", results: [] });
   const semanticCacheRef = useRef(new Map());
+  const joinableRooms = useMemo(() => openRooms.filter(isDirectRoomSupported), [openRooms]);
   const localSuggestions = useMemo(() => {
     if (!cleanSearchQuery(query)) return [];
     const topicSuggestions = fuzzyTopicSearch(topics, query, 5).map((topic) => ({ kind: "topic", topic }));
-    const openRoomTopics = openRooms.map((room) => ({
+    const openRoomTopics = joinableRooms.map((room) => ({
       id: room.topicId || room.id || room.topic,
       title: room.topic,
       category: room.category,
@@ -81,24 +113,26 @@ export default function HomeView({ topics, matches, matchSource, debates, openRo
       seen.add(key);
       return true;
     }).slice(0, 6);
-  }, [openRooms, query, topics]);
+  }, [joinableRooms, query, topics]);
   const suggestions = useMemo(() => {
     if (semanticSearch.query !== cleanSearchQuery(query) || !semanticSearch.results.length) {
       return localSuggestions;
     }
 
-    const remoteSuggestions = semanticSearch.results.map((result) => ({
-      kind: result.kind,
-      topic: {
-        id: result.topic?.id || result.id,
-        title: result.title,
-        category: result.category,
-        tags: result.topic?.tags || [],
-        searchScore: result.searchScore,
-        matchType: result.matchType,
-      },
-      room: result.room,
-    }));
+    const remoteSuggestions = semanticSearch.results
+      .filter((result) => result.kind !== "room" || isDirectRoomSupported(result.room))
+      .map((result) => ({
+        kind: result.kind,
+        topic: {
+          id: result.topic?.id || result.id,
+          title: result.title,
+          category: result.category,
+          tags: result.topic?.tags || [],
+          searchScore: result.searchScore,
+          matchType: result.matchType,
+        },
+        room: result.room,
+      }));
     const seen = new Set();
 
     return [...remoteSuggestions, ...localSuggestions].filter((suggestion) => {
@@ -114,6 +148,13 @@ export default function HomeView({ topics, matches, matchSource, debates, openRo
   }, [localSuggestions, query, semanticSearch]);
   const hasSearch = Boolean(cleanSearchQuery(query));
   const currentDebates = debates.filter((debate) => ["active", "pending"].includes(debate.status)).slice(0, 4);
+  const recommendedRooms = useMemo(() => joinableRooms
+    .map((room) => ({ ...room, recommendationScore: scoreRecommendedRoom(room, matches) }))
+    .sort((a, b) =>
+      b.recommendationScore - a.recommendationScore ||
+      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime() ||
+      String(a.topic || "").localeCompare(String(b.topic || "")),
+    ), [joinableRooms, matches]);
 
   useEffect(() => {
     const cleanQuery = cleanSearchQuery(query);
@@ -193,11 +234,12 @@ export default function HomeView({ topics, matches, matchSource, debates, openRo
                   onClick={() => onTopic(
                     topics.find((topic) => topic.title === suggestion.topic.title) || suggestion.topic,
                     suggestion.kind === "room" ? `Open room: ${suggestion.room.visibility} ${suggestion.room.format}. ${suggestion.room.pace}. ${suggestion.room.evidence}. Choose a side to continue.` : "Choose a side to start a debate on this topic.",
+                    suggestion.kind === "room" ? suggestion.room : null,
                   )}
                 >
                   <CategoryIcon category={suggestion.topic.category} />
                   <span className="suggestion-text">
-                    <span className="suggestion-title">{suggestion.topic.title}</span>
+                    <span className="suggestion-title"><span>{getSuggestionActionLabel(suggestion)}</span><strong>{suggestion.topic.title}</strong></span>
                     <span className="suggestion-meta">{getSuggestionMeta(suggestion)}</span>
                   </span>
                 </button>
@@ -209,13 +251,26 @@ export default function HomeView({ topics, matches, matchSource, debates, openRo
                   </svg>
                 </span>
                 <span className="suggestion-text">
-                  <span className="suggestion-title">Create debate for "{query.trim()}"</span>
-                  <span className="suggestion-meta">{suggestions.length ? "Not seeing the right match?" : "No strong topic match yet"}</span>
+                  <span className="suggestion-title"><span>Create</span><strong>{query.trim()}</strong></span>
+                  <span className="suggestion-meta">{suggestions.length ? "No good room? Set rules and publish one." : "No strong match yet. Set rules and publish a room."}</span>
                 </span>
               </button>
             </div>
           ) : null}
         </label>
+      </section>
+      <section className="open-seats-panel">
+        <div className="matches-head"><div><p className="eyebrow">Open rooms</p><h2>Recommended open rooms</h2></div><span className="source-badge">{matchSource}</span></div>
+        <div className="open-seat-grid">
+          {recommendedRooms.length ? recommendedRooms.slice(0, 4).map((room) => (
+            <button key={room.id || room.topic} className="open-seat-card" type="button" onClick={() => onTopic(topics.find((topic) => topic.title === room.topic) || { id: room.topicId || room.topic, title: room.topic, category: room.category, tags: [] }, `Open room: ${room.visibility} ${room.format}. ${room.pace}. ${room.evidence}. Choose a side to continue.`, room)}>
+              <CategoryIcon category={room.category} />
+              <span>Needs {room.need} - {room.format}</span>
+              <strong>{room.topic}</strong>
+              <small>{room.host ? `${room.host} - ` : ""}{room.visibility} - {room.pace} - {room.evidence}</small>
+            </button>
+          )) : <p className="profile-summary">No 1v1 rooms are waiting right now. Search a topic to create one.</p>}
+        </div>
       </section>
       <section className="featured-panel">
         <div className="matches-head"><div><p className="eyebrow">Featured public debates</p><h2>Read the room</h2></div></div>
@@ -228,32 +283,6 @@ export default function HomeView({ topics, matches, matchSource, debates, openRo
               <p>{debate.text}</p>
             </article>
           ))}
-        </div>
-      </section>
-      <section className="open-seats-panel">
-        <div className="matches-head"><div><p className="eyebrow">Open seats</p><h2>Waiting for opponents</h2></div></div>
-        <div className="open-seat-grid">
-          {openRooms.slice(0, 3).map((room) => (
-            <button key={room.id || room.topic} className="open-seat-card" type="button" onClick={() => onTopic(topics.find((topic) => topic.title === room.topic) || { id: room.topicId || room.topic, title: room.topic, category: room.category, tags: [] })}>
-              <CategoryIcon category={room.category} />
-              <span>Needs {room.need} - {room.format}</span>
-              <strong>{room.topic}</strong>
-              <small>{room.visibility} - {room.pace} - {room.evidence}</small>
-            </button>
-          ))}
-        </div>
-      </section>
-      <section className="matches-panel">
-        <div className="matches-head"><div><p className="eyebrow">Recommended</p><h2>For your style</h2></div><span className="source-badge">{matchSource}</span></div>
-        <div className="match-grid">
-          {matches.length ? matches.slice(0, 5).map((match) => (
-            <article key={match.topicId || match.title} className="match-card" onClick={() => onTopic(topics.find((topic) => topic.id === match.topicId) || { id: match.topicId, title: match.title, category: match.category, tags: [] }, match.stancePrompt)}>
-              <CategoryIcon category={match.category} />
-              <div className="match-meta"><span className="match-category">{match.category}</span><span className="match-score">{match.score || 0}% match</span></div>
-              <h3>{match.title}</h3>
-              <p>{match.reason}</p>
-            </article>
-          )) : <p className="profile-summary">No topic matches yet. Complete the survey to generate recommendations.</p>}
         </div>
       </section>
     </section>

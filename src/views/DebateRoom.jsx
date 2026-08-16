@@ -8,6 +8,16 @@ const phaseLabels = [
   ["closing", "Closing"],
 ];
 
+function getRoomRuleLabels(roomConfig = {}) {
+  return [
+    roomConfig.visibility || "Public",
+    roomConfig.format || "1v1",
+    `${roomConfig.sideSize || "1"} per side`,
+    roomConfig.pace || "Timed rounds",
+    roomConfig.evidence || "Evidence encouraged",
+  ];
+}
+
 function splitWithAnnotations(message, annotations, onAnnotationClick) {
   const noteRanges = annotations
     .filter((annotation) => annotation.messageId === message.id)
@@ -87,15 +97,43 @@ function ParticipantStrip({ participants = [], user, onSendFriendRequest, onOpen
   );
 }
 
-function CopilotPanel({ analysis, factCheck, annotations, messages, loadingAi, onTabFactCheck, onRefreshCopilot, onRunFactCheck, onOpenResearch, activeTab, setActiveTab }) {
+function SupportLauncher({ activeTab, annotations, messages, factCheck, onOpenTab }) {
+  const claims = extractClaims(messages);
+  const tabs = [
+    ["recap", "Recap", ""],
+    ["notes", "Notes", annotations.length ? String(annotations.length) : ""],
+    ["facts", "Facts", factCheck ? "Ready" : claims.length ? String(claims.length) : ""],
+    ["focus", "Focus", ""],
+  ];
+
+  return (
+    <div className="support-launcher" aria-label="Debate support tools">
+      {tabs.map(([key, label, badge]) => (
+        <button key={key} className={`support-launch-button ${activeTab === key ? "active" : ""}`} type="button" onClick={() => onOpenTab(key)}>
+          <span>{label}</span>
+          {badge ? <small>{badge}</small> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CopilotPanel({ analysis, factCheck, annotations, messages, loadingAi, onTabFactCheck, onRefreshCopilot, onRunFactCheck, onOpenResearch, activeTab, setActiveTab, onClose }) {
   const claims = extractClaims(messages);
   const latestClaim = claims.at(-1)?.claim || "";
 
   return (
-    <aside className="copilot-panel">
+    <aside className="copilot-panel" onMouseDown={(event) => event.stopPropagation()}>
       <div className="copilot-head">
         <div><p className="eyebrow">AI Co-Pilot</p><h2>Debate support</h2></div>
-        <span className="source-badge">DeepSeek</span>
+        <div className="copilot-head-actions">
+          <span className="source-badge">DeepSeek</span>
+          <button className="panel-close-button" type="button" onClick={onClose} aria-label="Close debate support">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4 6.4 5Z" />
+            </svg>
+          </button>
+        </div>
       </div>
       <div className="copilot-tabs">
         {["recap", "notes", "facts", "focus"].map((tab) => (
@@ -174,6 +212,7 @@ export default function DebateRoom({ debateId, user, onHome, onResearch, onSendF
   const [analysis, setAnalysis] = useState(null);
   const [factCheck, setFactCheck] = useState(null);
   const [activeTab, setActiveTab] = useState("recap");
+  const [supportOpen, setSupportOpen] = useState(false);
   const [loadingAi, setLoadingAi] = useState(false);
   const [speechActive, setSpeechActive] = useState(false);
   const endRef = useRef(null);
@@ -203,6 +242,9 @@ export default function DebateRoom({ debateId, user, onHome, onResearch, onSendF
   const isTurn = state?.turnUserId === user.id && !state?.isFinished;
   const minutes = Math.floor((state?.secondsRemaining || 0) / 60);
   const seconds = String((state?.secondsRemaining || 0) % 60).padStart(2, "0");
+  const activePhaseLabels = state?.phasePlan?.length
+    ? state.phasePlan.map((phase) => [phase.key, phase.label.replace(" statement", "")])
+    : phaseLabels;
 
   async function sendMessage() {
     const clean = text.trim();
@@ -235,6 +277,7 @@ export default function DebateRoom({ debateId, user, onHome, onResearch, onSendF
       });
       setFactCheck(next);
       setActiveTab("facts");
+      setSupportOpen(true);
     } finally {
       setLoadingAi(false);
     }
@@ -260,6 +303,7 @@ export default function DebateRoom({ debateId, user, onHome, onResearch, onSendF
       end: start + quote.length,
     });
     setActiveTab("notes");
+    setSupportOpen(true);
   }
 
   async function saveAnnotation(event) {
@@ -311,6 +355,9 @@ export default function DebateRoom({ debateId, user, onHome, onResearch, onSendF
       <section className="room-panel">
         <button className="secondary-button compact-button" type="button" onClick={onHome}>Home</button>
         <h1>{state?.topicTitle || "Debate"}</h1>
+        <div className="room-rules">
+          {getRoomRuleLabels(state?.roomConfig).map((label) => <span key={label}>{label}</span>)}
+        </div>
         <ParticipantStrip participants={state?.participants || []} user={user} onSendFriendRequest={onSendFriendRequest} onOpenProfile={onOpenProfile} />
         <div className="debate-room-grid">
           <section className="chat-stack">
@@ -322,13 +369,23 @@ export default function DebateRoom({ debateId, user, onHome, onResearch, onSendF
               <div className="turn-timer">{state?.isFinished ? "Done" : `${minutes}:${seconds}`}</div>
             </div>
             <div className="phase-track" aria-label="Debate phases">
-              {phaseLabels.map(([key, label]) => (
+              {activePhaseLabels.map(([key, label]) => (
                 <span key={key} className={`phase-pill ${state?.phaseKey === key ? "active" : ""}`}>
                   {label}
                 </span>
               ))}
               <span className={`phase-pill ${state?.isFinished ? "active" : ""}`}>Finished</span>
             </div>
+            <SupportLauncher
+              activeTab={activeTab}
+              annotations={annotations}
+              messages={messages}
+              factCheck={factCheck}
+              onOpenTab={(tab) => {
+                setActiveTab(tab);
+                setSupportOpen(true);
+              }}
+            />
             <div className="chat-thread" onMouseUp={captureSelection}>
               {messages.map((message) => {
                 const mine = message.userId === user.id;
@@ -370,20 +427,25 @@ export default function DebateRoom({ debateId, user, onHome, onResearch, onSendF
               <small className="composer-hint">Enter to send. Shift+Enter for a new line.</small>
             </div>
           </section>
-          <CopilotPanel
-            analysis={analysis}
-            factCheck={factCheck}
-            annotations={annotations}
-            messages={messages}
-            loadingAi={loadingAi}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            onRefreshCopilot={refreshCopilot}
-            onRunFactCheck={runFactCheck}
-            onTabFactCheck={runFactCheck}
-            onOpenResearch={() => onResearch(factCheck)}
-          />
         </div>
+        {supportOpen ? (
+          <div className="support-drawer-layer" onMouseDown={() => setSupportOpen(false)}>
+            <CopilotPanel
+              analysis={analysis}
+              factCheck={factCheck}
+              annotations={annotations}
+              messages={messages}
+              loadingAi={loadingAi}
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              onClose={() => setSupportOpen(false)}
+              onRefreshCopilot={refreshCopilot}
+              onRunFactCheck={runFactCheck}
+              onTabFactCheck={runFactCheck}
+              onOpenResearch={() => onResearch(factCheck)}
+            />
+          </div>
+        ) : null}
       </section>
     </main>
   );

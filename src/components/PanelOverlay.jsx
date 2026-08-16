@@ -34,6 +34,26 @@ function UserActionCard({ person, user, onSendFriendRequest, onOpenProfile, hide
   );
 }
 
+function RoomRuleChips({ config }) {
+  if (!config) {
+    return null;
+  }
+
+  const labels = [
+    config.visibility,
+    config.format,
+    `${config.sideSize || "1"} per side`,
+    config.pace,
+    config.evidence,
+  ].filter(Boolean);
+
+  return (
+    <div className="mini-rule-row">
+      {labels.map((label) => <span key={label}>{label}</span>)}
+    </div>
+  );
+}
+
 export default function PanelOverlay({
   panel,
   user,
@@ -105,6 +125,7 @@ export default function PanelOverlay({
                     <div>
                       <span className="source-badge">{accepted ? "Waiting" : "Potential match"}</span>
                       <h3>{proposal.topicTitle}</h3>
+                      <RoomRuleChips config={proposal.roomConfig} />
                       <UserActionCard person={opponent} user={user} onSendFriendRequest={onSendFriendRequest} onOpenProfile={onOpenProfile} />
                     </div>
                   </div>
@@ -135,6 +156,7 @@ export default function PanelOverlay({
             {visibleDebates.length ? visibleDebates.map((debate) => (
               <button key={debate.id} className="debate-record clickable-record" type="button" onClick={() => debate.status === "active" || debate.status === "closed" ? onOpenDebate(debate.id) : null}>
                 <h3>{debate.topicTitle}</h3>
+                <RoomRuleChips config={debate.roomConfig} />
                 <p>{debate.detail || debate.status}</p>
               </button>
             )) : <p className="empty-note">No debates yet.</p>}

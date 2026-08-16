@@ -20,6 +20,19 @@ const debatePhases = [
   { key: "cross-question", label: "Cross-question", durationSeconds: 120 },
   { key: "closing", label: "Closing statement", durationSeconds: 120 },
 ];
+const defaultRoomConfig = {
+  sourceRoomId: "",
+  visibility: "Public",
+  format: "1v1",
+  sideSize: "1",
+  pace: "Timed rounds",
+  evidence: "Evidence encouraged",
+};
+const pacePhaseDurations = {
+  "Rapid fire": [90, 90, 60, 60],
+  "Timed rounds": [180, 180, 120, 120],
+  "Slow evidence review": [300, 300, 180, 180],
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -47,6 +60,55 @@ function parseJson(value, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+function normalizeRoomConfig(config = {}) {
+  return {
+    sourceRoomId: String(config.sourceRoomId || "").trim(),
+    visibility: String(config.visibility || defaultRoomConfig.visibility).trim() || defaultRoomConfig.visibility,
+    format: String(config.format || defaultRoomConfig.format).trim() || defaultRoomConfig.format,
+    sideSize: String(config.sideSize || config.side_size || defaultRoomConfig.sideSize).trim() || defaultRoomConfig.sideSize,
+    pace: String(config.pace || defaultRoomConfig.pace).trim() || defaultRoomConfig.pace,
+    evidence: String(config.evidence || defaultRoomConfig.evidence).trim() || defaultRoomConfig.evidence,
+  };
+}
+
+function getRoomConfigFromRow(row = {}) {
+  return normalizeRoomConfig({
+    sourceRoomId: row.source_room_id || row.id || "",
+    visibility: row.visibility,
+    format: row.format,
+    sideSize: row.side_size,
+    pace: row.pace,
+    evidence: row.evidence,
+  });
+}
+
+function getPhasePlanForConfig(config = {}) {
+  const normalized = normalizeRoomConfig(config);
+  const durations = pacePhaseDurations[normalized.pace] || pacePhaseDurations[defaultRoomConfig.pace];
+
+  return debatePhases.map((phase, index) => ({
+    ...phase,
+    durationSeconds: durations[index] || phase.durationSeconds,
+  }));
+}
+
+function parseRoomConfig(value, fallback = defaultRoomConfig) {
+  return normalizeRoomConfig(parseJson(value, fallback) || fallback);
+}
+
+function roomConfigsCompatible(currentRequest, candidateRequest) {
+  const current = parseRoomConfig(currentRequest.room_config_json);
+  const candidate = parseRoomConfig(candidateRequest.room_config_json);
+  const currentSource = currentRequest.source_room_id || current.sourceRoomId;
+  const candidateSource = candidateRequest.source_room_id || candidate.sourceRoomId;
+
+  if (currentSource || candidateSource) {
+    return currentSource && candidateSource && currentSource === candidateSource;
+  }
+
+  return ["visibility", "format", "sideSize", "pace", "evidence"].every((key) => current[key] === candidate[key]);
 }
 
 function getExperienceLevel(xp = 0) {
@@ -126,6 +188,8 @@ function initDatabase() {
       topic_title TEXT NOT NULL,
       stance TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'open',
+      source_room_id TEXT NOT NULL DEFAULT '',
+      room_config_json TEXT NOT NULL DEFAULT '{}',
       metadata_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -136,6 +200,8 @@ function initDatabase() {
       topic_id TEXT NOT NULL,
       topic_title TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
+      source_room_id TEXT NOT NULL DEFAULT '',
+      room_config_json TEXT NOT NULL DEFAULT '{}',
       accepted_by_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -158,6 +224,8 @@ function initDatabase() {
       phase_key TEXT NOT NULL DEFAULT 'opening',
       turn_index INTEGER NOT NULL DEFAULT 0,
       turn_deadline_at TEXT,
+      source_room_id TEXT NOT NULL DEFAULT '',
+      room_config_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -312,9 +380,15 @@ function initDatabase() {
   `);
 
   ensureColumn("match_requests", "metadata_json", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn("match_requests", "source_room_id", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn("match_requests", "room_config_json", "TEXT NOT NULL DEFAULT '{}'");
+  ensureColumn("match_proposals", "source_room_id", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn("match_proposals", "room_config_json", "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn("debates", "phase_key", "TEXT NOT NULL DEFAULT 'opening'");
   ensureColumn("debates", "turn_index", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn("debates", "turn_deadline_at", "TEXT");
+  ensureColumn("debates", "source_room_id", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn("debates", "room_config_json", "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn("ai_request_logs", "score", "INTEGER");
   ensureColumn("ai_request_logs", "review_note", "TEXT NOT NULL DEFAULT ''");
 }
@@ -404,6 +478,8 @@ function toProposal(row) {
     topicId: row.topic_id,
     topicTitle: row.topic_title,
     status: row.status,
+    sourceRoomId: row.source_room_id || "",
+    roomConfig: parseRoomConfig(row.room_config_json),
     acceptedBy: parseJson(row.accepted_by_json, []),
     users,
     createdAt: row.created_at,
@@ -429,6 +505,7 @@ function toOpenRoom(row) {
     need: row.need,
     pace: row.pace,
     evidence: row.evidence,
+    roomConfig: getRoomConfigFromRow(row),
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -577,6 +654,10 @@ function listOpenRoomsForUser(userId = "") {
     }
 
     if (room.visibility === "Friends") {
+      return areFriends(userId, room.hostUserId);
+    }
+
+    if (room.visibility === "Followers") {
       return areFriends(userId, room.hostUserId);
     }
 
@@ -998,14 +1079,22 @@ function getDebateContext(debateId) {
     proposalId: row.proposal_id,
     topicId: row.topic_id,
     topicTitle: row.topic_title,
+    sourceRoomId: row.source_room_id || "",
+    roomConfig: parseRoomConfig(row.room_config_json),
     status: row.status,
     turnState: getDebateTurnState(debateId),
     participants: listDebateParticipants(debateId),
   };
 }
 
-function getPhaseByTurnIndex(turnIndex, participantCount = 2) {
-  return debatePhases[Math.floor(turnIndex / Math.max(participantCount, 1))] || null;
+function getDebatePhasePlan(debateId) {
+  const row = getDebateRow(debateId);
+
+  return getPhasePlanForConfig(parseRoomConfig(row?.room_config_json));
+}
+
+function getPhaseByTurnIndex(turnIndex, participantCount = 2, phasePlan = debatePhases) {
+  return phasePlan[Math.floor(turnIndex / Math.max(participantCount, 1))] || null;
 }
 
 function createRawSystemMessage(debateId, text) {
@@ -1031,16 +1120,22 @@ function getDebateTurnState(debateId) {
 
   const participants = listDebateParticipants(debateId);
   const participantCount = Math.max(participants.length, 1);
-  const phase = getPhaseByTurnIndex(row.turn_index, participantCount);
+  const phasePlan = getDebatePhasePlan(debateId);
+  const phase = getPhaseByTurnIndex(row.turn_index, participantCount, phasePlan);
   const current = phase ? participants[row.turn_index % participantCount] : null;
   const remainingMs = row.turn_deadline_at ? new Date(row.turn_deadline_at).getTime() - Date.now() : 0;
 
   return {
+    topicId: row.topic_id,
+    topicTitle: row.topic_title,
+    sourceRoomId: row.source_room_id || "",
+    roomConfig: parseRoomConfig(row.room_config_json),
+    phasePlan,
     phaseKey: row.phase_key,
     phaseLabel: phase?.label || "Finished",
     status: row.status,
     turnIndex: row.turn_index,
-    totalTurns: debatePhases.length * participantCount,
+    totalTurns: phasePlan.length * participantCount,
     turnUserId: current?.userId || "",
     turnUserName: current?.name || "",
     turnDeadlineAt: row.turn_deadline_at || "",
@@ -1052,7 +1147,8 @@ function getDebateTurnState(debateId) {
 function setDebateTurn(debateId, turnIndex, reason = "") {
   const participants = listDebateParticipants(debateId);
   const participantCount = Math.max(participants.length, 1);
-  const phase = getPhaseByTurnIndex(turnIndex, participantCount);
+  const phasePlan = getDebatePhasePlan(debateId);
+  const phase = getPhaseByTurnIndex(turnIndex, participantCount, phasePlan);
   const updatedAt = nowIso();
 
   if (!phase) {
@@ -1113,7 +1209,7 @@ function advanceExpiredDebateTurns(debateId) {
     guard += 1;
     changed = true;
 
-    if (guard > debatePhases.length * 2 + 2) {
+    if (guard > getDebatePhasePlan(debateId).length * 2 + 2) {
       break;
     }
   }
@@ -1130,6 +1226,8 @@ function listDebatesForUser(userId) {
              d.phase_key,
              d.turn_index,
              d.turn_deadline_at,
+             d.source_room_id,
+             d.room_config_json,
              d.updated_at,
              p.stance,
              p.detail
@@ -1148,6 +1246,8 @@ function listDebatesForUser(userId) {
         status: turnState?.status || row.status,
         stance: row.stance,
         detail: row.detail,
+        sourceRoomId: row.source_room_id || "",
+        roomConfig: parseRoomConfig(row.room_config_json),
         participants: listDebateParticipants(row.id),
         turnState,
         updatedAt: row.updated_at,
@@ -1155,7 +1255,7 @@ function listDebatesForUser(userId) {
     });
   const requestRows = db
     .prepare(`
-      SELECT id, topic_title, stance, updated_at
+      SELECT id, topic_title, stance, source_room_id, room_config_json, updated_at
       FROM match_requests
       WHERE user_id = ? AND status = 'open'
       ORDER BY updated_at DESC
@@ -1167,11 +1267,13 @@ function listDebatesForUser(userId) {
       status: "pending",
       stance: row.stance,
       detail: "Finding an opponent. Match request remains open.",
+      sourceRoomId: row.source_room_id || "",
+      roomConfig: parseRoomConfig(row.room_config_json),
       updatedAt: row.updated_at,
     }));
   const proposalRows = db
     .prepare(`
-      SELECT p.id, p.topic_title, p.status, p.updated_at, u.stance, p.accepted_by_json
+      SELECT p.id, p.topic_title, p.status, p.source_room_id, p.room_config_json, p.updated_at, u.stance, p.accepted_by_json
       FROM match_proposals p
       JOIN match_proposal_users u ON u.proposal_id = p.id
       WHERE u.user_id = ? AND p.status = 'pending'
@@ -1189,6 +1291,8 @@ function listDebatesForUser(userId) {
         detail: accepted.includes(userId)
           ? "You accepted. Waiting for the other side."
           : "Potential match. Waiting for both sides to accept.",
+        sourceRoomId: row.source_room_id || "",
+        roomConfig: parseRoomConfig(row.room_config_json),
         updatedAt: row.updated_at,
       };
     });
@@ -1221,12 +1325,14 @@ function listProposalsForUser(userId) {
 function createMatchProposal(currentRequest, opponentRequest) {
   const id = createId("proposal");
   const createdAt = nowIso();
+  const sourceRoomId = currentRequest.source_room_id || opponentRequest.source_room_id || "";
+  const roomConfig = parseRoomConfig(currentRequest.room_config_json || opponentRequest.room_config_json);
 
   db.prepare(`
     INSERT INTO match_proposals (
-      id, topic_id, topic_title, accepted_by_json, created_at, updated_at
-    ) VALUES (?, ?, ?, '[]', ?, ?)
-  `).run(id, currentRequest.topic_id, currentRequest.topic_title, createdAt, createdAt);
+      id, topic_id, topic_title, source_room_id, room_config_json, accepted_by_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, '[]', ?, ?)
+  `).run(id, currentRequest.topic_id, currentRequest.topic_title, sourceRoomId, json(roomConfig, defaultRoomConfig), createdAt, createdAt);
 
   const insertUser = db.prepare(`
     INSERT INTO match_proposal_users (proposal_id, user_id, stance, request_id)
@@ -1311,11 +1417,24 @@ function scoreRequestCompatibility(currentRequest, candidateRequest) {
   return score;
 }
 
-function createMatchRequest({ userId, topicId, topicTitle, stance, metadata = {} }) {
+function createMatchRequest({ userId, topicId, topicTitle, stance, sourceRoomId = "", roomConfig = {}, metadata = {} }) {
   const createdAt = nowIso();
   const userSnapshot = getUserMatchSnapshot(userId);
+  const safeRoomConfig = normalizeRoomConfig({
+    ...roomConfig,
+    sourceRoomId: sourceRoomId || roomConfig.sourceRoomId,
+  });
+
+  if (safeRoomConfig.sideSize !== "1") {
+    const error = new Error("Direct chat matchmaking currently supports 1 per side. This group room remains discoverable.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const safeSourceRoomId = safeRoomConfig.sourceRoomId;
   const requestMetadata = {
     ...metadata,
+    roomConfig: safeRoomConfig,
     ...userSnapshot,
     requestedAt: createdAt,
   };
@@ -1334,12 +1453,24 @@ function createMatchRequest({ userId, topicId, topicTitle, stance, metadata = {}
   const currentId = createId("request");
   db.prepare(`
     INSERT INTO match_requests (
-      id, user_id, topic_id, topic_title, stance, status, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)
-  `).run(currentId, userId, topicId, topicTitle, stance, json(requestMetadata, {}), createdAt, createdAt);
+      id, user_id, topic_id, topic_title, stance, status, source_room_id, room_config_json, metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)
+  `).run(
+    currentId,
+    userId,
+    topicId,
+    topicTitle,
+    stance,
+    safeSourceRoomId,
+    json(safeRoomConfig, defaultRoomConfig),
+    json(requestMetadata, {}),
+    createdAt,
+    createdAt,
+  );
 
   const current = db.prepare("SELECT * FROM match_requests WHERE id = ?").get(currentId);
   const opposite = candidates
+    .filter((request) => roomConfigsCompatible(current, request))
     .map((request) => ({ request, score: scoreRequestCompatibility(current, request) }))
     .sort((a, b) => b.score - a.score || new Date(a.request.created_at).getTime() - new Date(b.request.created_at).getTime())
     .at(0)?.request;
@@ -1362,6 +1493,8 @@ function createMatchRequest({ userId, topicId, topicTitle, stance, metadata = {}
       topicId: current.topic_id,
       topicTitle: current.topic_title,
       stance: current.stance,
+      sourceRoomId: current.source_room_id || "",
+      roomConfig: parseRoomConfig(current.room_config_json),
       metadata: requestMetadata,
       requestedAt: current.created_at,
     },
@@ -1530,17 +1663,22 @@ function createActiveDebateFromProposal(proposal) {
 
   const createdAt = nowIso();
   const debateId = proposal.id;
+  const roomConfig = normalizeRoomConfig(proposal.roomConfig);
+  const phasePlan = getPhasePlanForConfig(roomConfig);
 
   db.prepare(`
     INSERT INTO debates (
-      id, proposal_id, topic_id, topic_title, status, phase_key, turn_index, turn_deadline_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'active', 'opening', 0, ?, ?, ?)
+      id, proposal_id, topic_id, topic_title, status, phase_key, turn_index,
+      turn_deadline_at, source_room_id, room_config_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'active', 'opening', 0, ?, ?, ?, ?, ?)
   `).run(
     debateId,
     proposal.id,
     proposal.topicId,
     proposal.topicTitle,
-    addSecondsIso(createdAt, debatePhases[0].durationSeconds),
+    addSecondsIso(createdAt, phasePlan[0].durationSeconds),
+    proposal.sourceRoomId || roomConfig.sourceRoomId || "",
+    json(roomConfig, defaultRoomConfig),
     createdAt,
     createdAt,
   );
@@ -1559,6 +1697,10 @@ function createActiveDebateFromProposal(proposal) {
       `Matched with ${getUserName(opponent.userId)}. Your side: ${user.stance}.`,
     );
   });
+
+  if (proposal.sourceRoomId) {
+    db.prepare("UPDATE open_rooms SET status = 'matched', updated_at = ? WHERE id = ?").run(createdAt, proposal.sourceRoomId);
+  }
 
   createMessage({
     debateId,

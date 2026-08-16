@@ -64,6 +64,7 @@ export default function App() {
   const [panel, setPanelState] = useState({ open: "" });
   const [selectedTopic, setSelectedTopic] = useState(null);
   const [topicPrompt, setTopicPrompt] = useState("");
+  const [selectedRoom, setSelectedRoom] = useState(null);
   const [createTopic, setCreateTopic] = useState(null);
   const [activeDebateId, setActiveDebateId] = useState(initialRoute.debateId || "");
   const [activeProfileUserId, setActiveProfileUserId] = useState(initialRoute.userId || "");
@@ -136,6 +137,7 @@ export default function App() {
       const topic = loadedTopics.find((item) => item.id === initialRoute.topicId);
       if (topic) {
         setSelectedTopic(topic);
+        setSelectedRoom(null);
         setView("topic");
         return;
       }
@@ -166,6 +168,7 @@ export default function App() {
       }
       if (route.view === "topic") {
         setSelectedTopic(topics.find((topic) => topic.id === route.topicId) || null);
+        setSelectedRoom(null);
       }
       if (route.view === "public-profile") {
         setActiveProfileUserId(route.userId || "");
@@ -193,9 +196,10 @@ export default function App() {
     window.history.replaceState({}, "", "/");
   }
 
-  function chooseTopic(topic, prompt = "Choose a side and set the debate rules before entering matchmaking.") {
+  function chooseTopic(topic, prompt = "Choose a side and set the debate rules before entering matchmaking.", room = null) {
     setSelectedTopic(topic);
     setTopicPrompt(prompt);
+    setSelectedRoom(room);
     setCreateTopic(null);
     navigate({ view: "topic", topicId: topic.id });
   }
@@ -294,7 +298,7 @@ export default function App() {
   }
 
   if (view === "topic" && selectedTopic) {
-    return <TopicView topic={selectedTopic} prompt={topicPrompt} onBack={() => navigate({ view: "home" })} onRefreshState={() => refreshState()} />;
+    return <TopicView topic={selectedTopic} prompt={topicPrompt} room={selectedRoom} onBack={() => navigate({ view: "home" })} onRefreshState={() => refreshState()} />;
   }
 
   if (view === "room" && activeDebateId) {
