@@ -1024,8 +1024,8 @@ h1 {
     linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(236, 245, 255, 0.68));
 }
 
-.featured-card span,
-.open-seat-card span {
+.featured-card > span,
+.open-seat-card > span {
   color: var(--rose);
   font-size: 0.72rem;
   font-weight: 900;
@@ -1033,7 +1033,7 @@ h1 {
   text-transform: uppercase;
 }
 
-.featured-card span {
+.featured-card > span {
   color: rgba(255, 255, 255, 0.78);
 }
 
@@ -1314,6 +1314,7 @@ h1 {
 }
 
 .create-match-card {
+  position: relative;
   display: grid;
   gap: 5px;
   width: 100%;
@@ -1351,6 +1352,81 @@ h1 {
   color: var(--muted);
   font-size: 0.8rem;
   line-height: 1.35;
+}
+
+.open-room-card-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.open-room-card-footer > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.room-rule-icons {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 5px;
+  align-items: center;
+}
+
+.room-rule-icon {
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(51, 95, 159, 0.16);
+  border-radius: 50%;
+  color: var(--blue-dark);
+  background: rgba(236, 245, 255, 0.82);
+}
+
+.room-rule-icon svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.room-people-stack {
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  z-index: 2;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+}
+
+.room-person-dot {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  margin-left: -7px;
+  border: 2px solid rgba(255, 255, 255, 0.94);
+  border-radius: 50%;
+  color: #fff;
+  background: var(--blue);
+  box-shadow: 0 6px 14px rgba(42, 73, 105, 0.16);
+  font-size: 0.67rem;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.room-person-dot.more {
+  color: var(--blue-dark);
+  background: rgba(232, 242, 255, 0.96);
 }
 
 .create-modal-actions {
@@ -1496,19 +1572,22 @@ h1 {
   line-height: 1;
 }
 
-.topic-room-rules,
-.room-rules {
+.room-rule-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
   margin: 0 0 16px;
 }
 
-.topic-room-rules span,
-.room-rules span {
+.room-rule-chips.compact {
+  margin-bottom: 14px;
+}
+
+.room-rule-chips span {
   min-height: 28px;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   padding: 5px 9px;
   border: 1px solid rgba(51, 95, 159, 0.18);
   border-radius: 999px;
@@ -1517,6 +1596,14 @@ h1 {
   font-size: 0.76rem;
   font-weight: 900;
   line-height: 1.1;
+}
+
+.room-rule-chips svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: currentColor;
+  opacity: 0.78;
 }
 
 .debate-tags {

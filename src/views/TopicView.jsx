@@ -1,4 +1,5 @@
 import { useState } from "react";
+import RoomRuleChips from "../components/RoomRuleChips.jsx";
 import { apiRequest } from "../lib/api.js";
 
 function getRoomConfig(room) {
@@ -18,6 +19,9 @@ export default function TopicView({ topic, prompt, room, onBack, onRefreshState 
   const [requestId, setRequestId] = useState("");
   const roomConfig = getRoomConfig(room);
   const directMatchingSupported = roomConfig.sideSize === "1";
+  const summary = room
+    ? "Choose your side to enter this room's matching queue."
+    : prompt || "Choose a side and set the debate rules before entering matchmaking.";
 
   async function findOpponent() {
     if (!stance || !directMatchingSupported) return;
@@ -59,14 +63,8 @@ export default function TopicView({ topic, prompt, room, onBack, onRefreshState 
         <button className="secondary-button compact-button" type="button" onClick={onBack}>Home</button>
         <p className="eyebrow">{topic.category || "Topic"}</p>
         <h1>{topic.title}</h1>
-        <p className="profile-summary">{prompt || "Choose a side and set the debate rules before entering matchmaking."}</p>
-        <div className="topic-room-rules" aria-label="Room rules">
-          <span>{roomConfig.visibility}</span>
-          <span>{roomConfig.format}</span>
-          <span>{roomConfig.sideSize} per side</span>
-          <span>{roomConfig.pace}</span>
-          <span>{roomConfig.evidence}</span>
-        </div>
+        <p className="profile-summary">{summary}</p>
+        <RoomRuleChips config={roomConfig} />
         {!directMatchingSupported ? (
           <p className="form-message">This room is discoverable, but direct chat matchmaking currently supports 1 per side. Group debate matching is the next implementation step.</p>
         ) : null}

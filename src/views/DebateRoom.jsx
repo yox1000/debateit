@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import RoomRuleChips from "../components/RoomRuleChips.jsx";
 import { apiRequest } from "../lib/api.js";
 
 const phaseLabels = [
@@ -7,16 +8,6 @@ const phaseLabels = [
   ["cross-question", "Cross-question"],
   ["closing", "Closing"],
 ];
-
-function getRoomRuleLabels(roomConfig = {}) {
-  return [
-    roomConfig.visibility || "Public",
-    roomConfig.format || "1v1",
-    `${roomConfig.sideSize || "1"} per side`,
-    roomConfig.pace || "Timed rounds",
-    roomConfig.evidence || "Evidence encouraged",
-  ];
-}
 
 function splitWithAnnotations(message, annotations, onAnnotationClick) {
   const noteRanges = annotations
@@ -355,9 +346,7 @@ export default function DebateRoom({ debateId, user, onHome, onResearch, onSendF
       <section className="room-panel">
         <button className="secondary-button compact-button" type="button" onClick={onHome}>Home</button>
         <h1>{state?.topicTitle || "Debate"}</h1>
-        <div className="room-rules">
-          {getRoomRuleLabels(state?.roomConfig).map((label) => <span key={label}>{label}</span>)}
-        </div>
+        <RoomRuleChips config={state?.roomConfig} compact />
         <ParticipantStrip participants={state?.participants || []} user={user} onSendFriendRequest={onSendFriendRequest} onOpenProfile={onOpenProfile} />
         <div className="debate-room-grid">
           <section className="chat-stack">

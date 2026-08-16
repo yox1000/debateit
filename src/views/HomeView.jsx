@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import CategoryIcon from "../components/CategoryIcon.jsx";
+import RoomPeopleStack from "../components/RoomPeopleStack.jsx";
+import RoomRuleIcons from "../components/RoomRuleIcons.jsx";
 import { featuredDebates } from "../data/catalog.js";
 import { apiRequest } from "../lib/api.js";
 import { cleanSearchQuery, fuzzyTopicSearch } from "../utils/fuzzySearch.js";
@@ -264,10 +266,14 @@ export default function HomeView({ topics, matches, matchSource, debates, openRo
         <div className="open-seat-grid">
           {recommendedRooms.length ? recommendedRooms.slice(0, 4).map((room) => (
             <button key={room.id || room.topic} className="open-seat-card" type="button" onClick={() => onTopic(topics.find((topic) => topic.title === room.topic) || { id: room.topicId || room.topic, title: room.topic, category: room.category, tags: [] }, `Open room: ${room.visibility} ${room.format}. ${room.pace}. ${room.evidence}. Choose a side to continue.`, room)}>
+              <RoomPeopleStack room={room} />
               <CategoryIcon category={room.category} />
               <span>Needs {room.need} - {room.format}</span>
               <strong>{room.topic}</strong>
-              <small>{room.host ? `${room.host} - ` : ""}{room.visibility} - {room.pace} - {room.evidence}</small>
+              <small className="open-room-card-footer">
+                <span>{room.host || "Host"}</span>
+                <RoomRuleIcons config={room.roomConfig || room} includeFormat={false} />
+              </small>
             </button>
           )) : <p className="profile-summary">No 1v1 rooms are waiting right now. Search a topic to create one.</p>}
         </div>

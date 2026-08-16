@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import CategoryIcon from "./CategoryIcon.jsx";
+import RoomPeopleStack from "./RoomPeopleStack.jsx";
+import RoomRuleIcons from "./RoomRuleIcons.jsx";
 import useModalControls from "../hooks/useModalControls.js";
 
 const visibilityHelp = {
@@ -127,10 +129,14 @@ export default function CreateDebateModal({ initialTopic, topics, openRooms, onC
           <div className="create-match-list">
             {matches.length ? matches.map((room) => (
               <button key={room.id || room.topic} className="create-match-card" type="button" onClick={() => onSelectTopic(topics.find((topic) => topic.title === room.topic) || { title: room.topic, category: room.category, id: room.topicId || room.topic }, `Open room: ${room.visibility} ${room.format}. ${room.pace}. ${room.evidence}. Choose a side to continue.`, room)}>
+                <RoomPeopleStack room={room} />
                 <CategoryIcon category={room.category} />
                 <span>Join - {room.score}% match - Needs {room.need}</span>
                 <strong>{room.topic}</strong>
-                <small>{room.host} - {room.format} - {room.visibility} - {room.evidence}</small>
+                <small className="open-room-card-footer">
+                  <span>{room.host || "Host"}</span>
+                  <RoomRuleIcons config={room.roomConfig || room} includeFormat={false} />
+                </small>
               </button>
             )) : <p className="profile-summary">No existing room matches this setup. Creating will publish a new room with these rules.</p>}
           </div>
