@@ -38,11 +38,26 @@ const profileMenuName = document.querySelector("#profile-menu-name");
 const profileMenuMeta = document.querySelector("#profile-menu-meta");
 const profileMenuEdit = document.querySelector("#profile-menu-edit");
 const profileMenuLogout = document.querySelector("#profile-menu-logout");
+const continueList = document.querySelector("#continue-list");
 const matchSource = document.querySelector("#match-source");
 const matchGrid = document.querySelector("#match-grid");
 const topicCount = document.querySelector("#topic-count");
 const topicSearch = document.querySelector("#topic-search");
 const searchSuggestions = document.querySelector("#search-suggestions");
+const createDebateButton = document.querySelector("#create-debate");
+const createDebateOverlay = document.querySelector("#create-debate-overlay");
+const createDebateClose = document.querySelector("#create-debate-close");
+const createDebateCancel = document.querySelector("#create-debate-cancel");
+const createDebateContinue = document.querySelector("#create-debate-continue");
+const createTopicInput = document.querySelector("#create-topic");
+const createVisibilitySelect = document.querySelector("#create-visibility");
+const createFormatSelect = document.querySelector("#create-format");
+const createSideSizeSelect = document.querySelector("#create-side-size");
+const createPaceSelect = document.querySelector("#create-pace");
+const createEvidenceSelect = document.querySelector("#create-evidence");
+const createMatchCount = document.querySelector("#create-match-count");
+const createMatchList = document.querySelector("#create-match-list");
+const homeTopicButtons = document.querySelectorAll("[data-home-topic]");
 const backHomeButton = document.querySelector("#back-home");
 const roomHomeButton = document.querySelector("#room-home");
 const researchBackButton = document.querySelector("#research-back");
@@ -195,6 +210,52 @@ const phaseLabels = [
   ["rebuttal", "Rebuttal"],
   ["cross-question", "Cross-question"],
   ["closing", "Closing"],
+];
+const mockOpenDebateRooms = [
+  {
+    topic: "Should facial recognition be banned in public spaces?",
+    category: "Technology",
+    visibility: "Public",
+    format: "1v1",
+    sideSize: "1",
+    pace: "Timed rounds",
+    evidence: "Evidence encouraged",
+    need: "Oppose",
+    host: "Civil Liberties Forum",
+  },
+  {
+    topic: "Should college athletes be paid?",
+    category: "Sports",
+    visibility: "Public",
+    format: "2v2",
+    sideSize: "2",
+    pace: "Rapid fire",
+    evidence: "Casual",
+    need: "Affirm",
+    host: "Saturday Sports Table",
+  },
+  {
+    topic: "Should AI-generated content be labeled everywhere?",
+    category: "Technology",
+    visibility: "Public",
+    format: "Panel",
+    sideSize: "3",
+    pace: "Slow evidence review",
+    evidence: "Source required",
+    need: "Oppose",
+    host: "Creator Policy Room",
+  },
+  {
+    topic: "Should schools ban smartphones during class?",
+    category: "Education",
+    visibility: "Public",
+    format: "1v1",
+    sideSize: "1",
+    pace: "Timed rounds",
+    evidence: "Evidence encouraged",
+    need: "Affirm",
+    host: "Education Lab",
+  },
 ];
 
 async function apiRequest(path, options = {}) {
@@ -962,6 +1023,49 @@ function createChip(text) {
   return chip;
 }
 
+function createCategoryIcon(category = "General") {
+  const normalized = String(category || "General").toLowerCase();
+  const iconPaths = {
+    politics: ["M4 9h16v2H4V9Zm2 3h2v6h2v-6h2v6h2v-6h2v6h2v2H4v-2h2v-6Zm6-9 8 4H4l8-4Z"],
+    culture: [
+      "M5 7.5c2 0 3.4.5 4.6 1.5 1.2-1 2.6-1.5 4.6-1.5 1 0 1.9.2 2.8.5v3.1c0 3-2.2 5.5-5.1 6.5l-2.3.8-2.3-.8C4.4 16.6 2.2 14.1 2.2 11.1V8c.9-.3 1.8-.5 2.8-.5Zm0 2c-.3 0-.6 0-.8.1v1.5c0 2 1.5 3.8 3.7 4.5l.7.2V11C7.7 10 6.6 9.5 5 9.5Zm9.2 0c-1.6 0-2.7.5-3.6 1.5v4.8l.7-.2c2.2-.7 3.7-2.5 3.7-4.5V9.6c-.2-.1-.5-.1-.8-.1Z",
+      "M17.7 3.1 20.9 6l-1.4 1.5-1.7-1.6-5.7 6.3-1.5-1.3 5.7-6.4-1.1-1 1.3-1.5 1.2 1.1Z",
+    ],
+    sports: ["M7 4h10v2h3v3c0 2.4-1.7 4.4-4 4.9A5.1 5.1 0 0 1 13 16v2h3v2H8v-2h3v-2a5.1 5.1 0 0 1-3-2.1C5.7 13.4 4 11.4 4 9V6h3V4Zm2 2v4.5a3 3 0 0 0 6 0V6H9Zm-3 2v1c0 1 .5 1.9 1.3 2.4A5 5 0 0 1 7 10.5V8H6Zm11 0v2.5c0 .3 0 .6-.1.9A3 3 0 0 0 18 9V8h-1Z"],
+    technology: ["M8 3h8v3h3v12h-3v3H8v-3H5V6h3V3Zm2 2v1h4V5h-4Zm-3 3v8h10V8H7Zm3 11h4v-1h-4v1Zm-1-8h6v2H9v-2Z"],
+    science: ["M9 3h6v2h-1v4.2l4.7 7.9A2.5 2.5 0 0 1 16.5 21h-9a2.5 2.5 0 0 1-2.2-3.9L10 9.2V5H9V3Zm3 7-2.3 3.8h4.6L12 10Zm-3.9 6-1.1 1.9a.5.5 0 0 0 .5.8h9a.5.5 0 0 0 .5-.8L15.9 16H8.1Z"],
+    history: ["M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18Zm0 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm1 2v4.6l3.1 1.8-1 1.7-4.1-2.4V7h2Z"],
+    business: ["M9 4h6l1 2h4v13H4V6h4l1-2Zm1.2 2-.4.8h4.4l-.4-.8h-3.6ZM6 8v3h12V8H6Zm0 5v4h12v-4h-5v1h-2v-1H6Z"],
+    ethics: ["M11 4h2v3h5v2h-2.1l2.4 5.2A3.5 3.5 0 0 1 12 16a3.5 3.5 0 0 1-6.3-1.8L8.1 9H6V7h5V4Zm-3 8.8h3.8L9.9 8.7 8 12.8Zm8 0-1.9-4.1-1.9 4.1H16ZM11 17h2v2h4v2H7v-2h4v-2Z"],
+    education: ["M12 4 3 8l9 4 7-3.1V14h2V8L12 4Zm-5 7.2V15c0 1.8 2.2 3.3 5 3.3s5-1.5 5-3.3v-3.8l-5 2.2-5-2.2Zm2 1.1 3 1.3 3-1.3V15c0 .5-1.1 1.3-3 1.3S9 15.5 9 15v-2.7Z"],
+    general: ["M4 5h16v14H4V5Zm2 2v10h12V7H6Zm2 2h8v2H8V9Zm0 4h5v2H8v-2Z"],
+  };
+  const key = Object.keys(iconPaths).find((candidate) => normalized.includes(candidate)) || "general";
+  const wrap = document.createElement("span");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+
+  wrap.className = "category-icon";
+  wrap.dataset.category = key;
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  iconPaths[key].forEach((pathData) => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathData);
+    svg.append(path);
+  });
+  wrap.append(svg);
+  return wrap;
+}
+
+function hydrateCategoryIcons(root = document) {
+  root.querySelectorAll("[data-category]:not(.category-icon)").forEach((card) => {
+    if (!card.querySelector(".category-icon")) {
+      card.prepend(createCategoryIcon(card.dataset.category));
+    }
+  });
+}
+
 function setNotificationVisibility(isVisible) {
   notificationCenter.hidden = !isVisible;
 
@@ -1405,6 +1509,56 @@ function renderMyDebates() {
   notificationList.replaceChildren(filterBar, list);
 }
 
+function renderHomeContinue() {
+  if (!continueList) {
+    return;
+  }
+
+  const panel = continueList.closest(".continue-panel");
+  const currentDebates = getLocalDebates()
+    .filter((debate) => ["active", "pending"].includes(debate.status))
+    .slice(0, 4);
+
+  continueList.replaceChildren();
+
+  if (panel) {
+    panel.hidden = !currentDebates.length;
+  }
+
+  if (!currentDebates.length) {
+    return;
+  }
+
+  currentDebates.forEach((debate) => {
+    const item = document.createElement("button");
+    const meta = document.createElement("span");
+    const title = document.createElement("strong");
+    const detail = document.createElement("span");
+
+    item.className = "continue-card";
+    item.type = "button";
+    meta.textContent = formatStatus(debate.status);
+    title.textContent = debate.topicTitle || "Untitled debate";
+    detail.textContent = debate.detail || "Debate details pending.";
+    item.append(meta, title, detail);
+
+    if (debate.status === "active") {
+      item.addEventListener("click", () => showDebateRoom(debate.id));
+    } else {
+      item.addEventListener("click", () => {
+        mountNotificationCenter(appHeaderActions);
+        debateFilters.clear();
+        notificationPanel.querySelector(".notification-head strong").textContent = "My debates";
+        renderMyDebates();
+        notificationPanel.hidden = false;
+        activeHeaderPanel = "debates";
+      });
+    }
+
+    continueList.append(item);
+  });
+}
+
 function createCancelButton() {
   const cancel = document.createElement("button");
   cancel.className = "secondary-button compact-button";
@@ -1446,25 +1600,34 @@ function renderProfile(user) {
   const prefers = matchingSignals.prefers || [];
   const avoids = matchingSignals.avoids || [];
 
-  profileSource.textContent = formatSource(profile?.source);
-  profileStyle.textContent = profile?.debateStyle || "Profile pending";
-  profileSummary.textContent =
-    profile?.summary || "Complete the first-login survey to generate debate recommendations.";
-  profileStats.replaceChildren();
+  if (profileSource) {
+    profileSource.textContent = formatSource(profile?.source);
+  }
+
+  if (profileStyle) {
+    profileStyle.textContent = profile?.debateStyle || "Profile pending";
+  }
+
+  if (profileSummary) {
+    profileSummary.textContent =
+      profile?.summary || "Complete the first-login survey to generate debate recommendations.";
+  }
+
+  profileStats?.replaceChildren();
   const level = getExperienceLevel(user.xp || 0);
   [
     `${level.label}`,
     `${user.xp || 0} XP`,
     user.country || "Country unset",
-  ].forEach((value) => profileStats.append(createChip(value)));
+  ].forEach((value) => profileStats?.append(createChip(value)));
   fillProfileEditForm(user);
 
-  profileTopics.replaceChildren();
+  profileTopics?.replaceChildren();
   (topics.length ? topics : ["General debate"]).forEach((topic) => {
-    profileTopics.append(createChip(topic));
+    profileTopics?.append(createChip(topic));
   });
 
-  profileSignals.replaceChildren();
+  profileSignals?.replaceChildren();
   [
     ["Difficulty", matchingSignals.difficulty || "Casual"],
     ["Skill", profile?.skillLevel || "Casual"],
@@ -1479,10 +1642,10 @@ function renderProfile(user) {
 
     term.textContent = label;
     description.textContent = value;
-    profileSignals.append(term, description);
+    profileSignals?.append(term, description);
   });
 
-  profileSuggestions.replaceChildren();
+  profileSuggestions?.replaceChildren();
   (
     suggestedTopics.length
       ? suggestedTopics
@@ -1490,7 +1653,7 @@ function renderProfile(user) {
   ).forEach((topic) => {
     const item = document.createElement("li");
     item.textContent = topic;
-    profileSuggestions.append(item);
+    profileSuggestions?.append(item);
   });
 }
 
@@ -1508,29 +1671,27 @@ function renderMatches(result) {
     return;
   }
 
-  matches.forEach((match) => {
+  matches.slice(0, 5).forEach((match) => {
     const card = document.createElement("article");
     const meta = document.createElement("div");
     const category = document.createElement("span");
     const score = document.createElement("span");
     const title = document.createElement("h3");
     const reason = document.createElement("p");
-    const stance = document.createElement("p");
 
     card.className = "match-card";
     meta.className = "match-meta";
     category.className = "match-category";
     score.className = "match-score";
-    stance.className = "stance-prompt";
 
     category.textContent = match.category || "Debate";
     score.textContent = `${match.score || 0}% match`;
     title.textContent = match.title || "Untitled debate";
     reason.textContent = match.reason || "Recommended from your debate profile.";
-    stance.textContent = match.stancePrompt || "Choose a side and prepare your opening argument.";
 
     meta.append(category, score);
-    card.append(meta, title, reason, stance);
+    card.dataset.category = match.category || "General";
+    card.append(createCategoryIcon(match.category), meta, title, reason);
     card.addEventListener("click", () => {
       const topic = topicCatalog.find((candidate) => candidate.id === match.topicId) || {
         id: match.topicId,
@@ -1555,6 +1716,131 @@ function topicToMatch(topic, reason = "Selected from topic search.") {
   };
 }
 
+async function openHomeTopic(title) {
+  await loadTopicCatalog();
+  const normalizedTitle = String(title || "").trim().toLowerCase();
+  const topic = topicCatalog.find((candidate) => candidate.title.toLowerCase() === normalizedTitle) || {
+    id: createStableKey(normalizedTitle || "home-topic"),
+    title,
+    category: "Public debate",
+    tags: [],
+  };
+
+  showDebateTopic(topic, "Choose a side and set the debate rules before entering matchmaking.");
+}
+
+function getCreateDebateConfig() {
+  return {
+    topic: createTopicInput?.value.trim() || "",
+    visibility: createVisibilitySelect?.value || "Public",
+    format: createFormatSelect?.value || "1v1",
+    sideSize: createSideSizeSelect?.value || "1",
+    pace: createPaceSelect?.value || "Timed rounds",
+    evidence: createEvidenceSelect?.value || "Evidence encouraged",
+  };
+}
+
+function scoreOpenRoom(room, config) {
+  const topic = config.topic.toLowerCase();
+  let score = 0;
+
+  if (!topic || room.topic.toLowerCase().includes(topic) || topic.split(/\s+/).some((term) => term.length > 3 && room.topic.toLowerCase().includes(term))) {
+    score += 35;
+  }
+
+  if (room.visibility === config.visibility) {
+    score += 15;
+  }
+
+  if (room.format === config.format) {
+    score += 20;
+  }
+
+  if (room.sideSize === config.sideSize) {
+    score += 10;
+  }
+
+  if (room.pace === config.pace) {
+    score += 10;
+  }
+
+  if (room.evidence === config.evidence) {
+    score += 10;
+  }
+
+  return score;
+}
+
+function renderCreateDebateMatches() {
+  if (!createMatchList) {
+    return;
+  }
+
+  const config = getCreateDebateConfig();
+  const matches = mockOpenDebateRooms
+    .map((room) => ({ ...room, score: scoreOpenRoom(room, config) }))
+    .filter((room) => room.score >= 35)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  createMatchList.replaceChildren();
+  createMatchCount.textContent = matches.length ? `${matches.length} found` : "No match";
+
+  if (!matches.length) {
+    const empty = document.createElement("p");
+    empty.className = "profile-summary";
+    empty.textContent = "No open rooms match this setup yet. Create a new room and wait for opponents.";
+    createMatchList.append(empty);
+    return;
+  }
+
+  matches.forEach((room) => {
+    const card = document.createElement("button");
+    const meta = document.createElement("span");
+    const title = document.createElement("strong");
+    const detail = document.createElement("small");
+
+    card.className = "create-match-card";
+    card.type = "button";
+    card.dataset.category = room.category || "General";
+    meta.textContent = `${room.score}% match · Needs ${room.need}`;
+    title.textContent = room.topic;
+    detail.textContent = `${room.host} · ${room.format} · ${room.visibility} · ${room.evidence}`;
+    card.append(createCategoryIcon(room.category), meta, title, detail);
+    card.addEventListener("click", () => {
+      closeCreateDebate();
+      openHomeTopic(room.topic).catch(() => {});
+    });
+    createMatchList.append(card);
+  });
+}
+
+function openCreateDebate() {
+  if (!createDebateOverlay) {
+    return;
+  }
+
+  createDebateOverlay.hidden = false;
+  createTopicInput.value = topicSearch.value.trim();
+  renderCreateDebateMatches();
+  window.setTimeout(() => createTopicInput.focus(), 0);
+}
+
+function closeCreateDebate() {
+  if (createDebateOverlay) {
+    createDebateOverlay.hidden = true;
+  }
+}
+
+async function continueCreateDebate() {
+  const config = getCreateDebateConfig();
+  const title = config.topic || "Open debate topic";
+
+  closeCreateDebate();
+  await openHomeTopic(title);
+  debatePrompt.textContent = `${config.visibility} ${config.format}. ${config.sideSize} per side. ${config.pace}. ${config.evidence}. Choose a side to continue.`;
+}
+
 function hideSearchSuggestions() {
   searchSuggestions.hidden = true;
   searchSuggestions.replaceChildren();
@@ -1574,15 +1860,21 @@ function showSearchSuggestions(topics) {
 
   topics.slice(0, 6).forEach((topic) => {
     const button = document.createElement("button");
+    const text = document.createElement("span");
     const title = document.createElement("span");
     const meta = document.createElement("span");
 
     button.className = "suggestion-row";
     button.type = "button";
+    button.dataset.category = topic.category || "General";
+    text.className = "suggestion-text";
+    title.className = "suggestion-title";
+    meta.className = "suggestion-meta";
     title.textContent = topic.title;
     meta.textContent = topic.category;
 
-    button.append(title, meta);
+    text.append(title, meta);
+    button.append(createCategoryIcon(topic.category), text);
     button.addEventListener("click", () => {
       topicSearch.value = topic.title;
       hideSearchSuggestions();
@@ -1627,10 +1919,14 @@ async function loadTopicCatalog() {
     const data = await response.json();
     topicCatalog = data.topics || [];
     topicCatalogVersion = data.version || `${topicCatalog.length}`;
-    topicCount.textContent = `${topicCatalog.length} topics`;
+    if (topicCount) {
+      topicCount.textContent = `${topicCatalog.length} topics`;
+    }
     searchTopics(topicSearch.value);
   } catch {
-    topicCount.textContent = "Unavailable";
+    if (topicCount) {
+      topicCount.textContent = "Unavailable";
+    }
   }
 
   return topicCatalog;
@@ -1660,7 +1956,7 @@ async function loadMatches(user) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         debateProfile: user.debateProfile || {},
-        limit: 8,
+        limit: 5,
       }),
     });
     const result = await response.json();
@@ -1705,6 +2001,7 @@ async function refreshUserState(markUnread = false) {
   if (!activeUser) {
     userDebates = [];
     userProposals = [];
+    renderHomeContinue();
     return;
   }
 
@@ -1720,6 +2017,7 @@ async function refreshUserState(markUnread = false) {
 
   userDebates = debatesData.debates || [];
   userProposals = proposalsData.proposals || [];
+  renderHomeContinue();
 
   if (markUnread) {
     userProposals.forEach((proposal) => {
@@ -1785,6 +2083,7 @@ async function showApp(user) {
     accountName.textContent = user.name || "Debater";
   }
   renderProfile(user);
+  hydrateCategoryIcons(appView);
   await loadTopicCatalog();
   await refreshUserState(true);
   startStatePolling();
@@ -3554,6 +3853,40 @@ topicSearch.addEventListener("input", () => {
 
 topicSearch.addEventListener("focus", () => {
   searchTopics(topicSearch.value);
+});
+
+createDebateButton?.addEventListener("click", () => {
+  openCreateDebate();
+});
+
+createDebateClose?.addEventListener("click", closeCreateDebate);
+createDebateCancel?.addEventListener("click", closeCreateDebate);
+createDebateContinue?.addEventListener("click", () => {
+  continueCreateDebate().catch(() => {});
+});
+
+[
+  createTopicInput,
+  createVisibilitySelect,
+  createFormatSelect,
+  createSideSizeSelect,
+  createPaceSelect,
+  createEvidenceSelect,
+].forEach((control) => {
+  control?.addEventListener("input", renderCreateDebateMatches);
+  control?.addEventListener("change", renderCreateDebateMatches);
+});
+
+createDebateOverlay?.addEventListener("click", (event) => {
+  if (event.target === createDebateOverlay) {
+    closeCreateDebate();
+  }
+});
+
+homeTopicButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    openHomeTopic(button.dataset.homeTopic).catch(() => {});
+  });
 });
 
 document.addEventListener("click", (event) => {

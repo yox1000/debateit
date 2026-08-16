@@ -115,17 +115,27 @@
       </header>
 
       <section class="home-panel" aria-label="Debate.it home">
+        <section class="continue-panel" aria-label="Continue debates" hidden>
+          <div class="matches-head">
+            <div>
+              <p class="eyebrow">Continue</p>
+              <h2>Current debates</h2>
+            </div>
+          </div>
+          <div class="continue-list" id="continue-list">
+            <p class="profile-summary">No active debates yet.</p>
+          </div>
+        </section>
+
         <section class="topic-search-panel" aria-label="Search debate topics">
           <div class="matches-head">
             <div>
-              <p class="eyebrow">Topic catalog</p>
-              <h2>Search topics</h2>
+              <h2>Discover debates</h2>
             </div>
-            <span class="source-badge" id="topic-count">100 topics</span>
+            <button class="secondary-button compact-button" type="button" id="create-debate">Create debate</button>
           </div>
 
           <label class="field search-field">
-            <span>Find a debate topic</span>
             <input
               type="search"
               id="topic-search"
@@ -136,45 +146,65 @@
           </label>
         </section>
 
-        <section class="profile-panel" aria-label="Your debate profile">
-          <div class="profile-head">
+        <section class="featured-panel" aria-label="Featured public debates">
+          <div class="matches-head">
             <div>
-              <p class="eyebrow">Your debate profile</p>
-              <h2 id="profile-style">Profile pending</h2>
-            </div>
-            <div class="profile-actions">
-              <span class="source-badge" id="profile-source">Local</span>
+              <p class="eyebrow">Featured public debates</p>
+              <h2>Read the room</h2>
             </div>
           </div>
 
-          <p class="profile-summary" id="profile-summary">
-            Complete the first-login survey to generate debate recommendations.
-          </p>
+          <div class="featured-grid">
+            <article class="featured-card" data-category="Politics">
+              <span>Politics · Public</span>
+              <h3>Housing advocate vs city council candidate</h3>
+              <p>Live written debate on rent caps, zoning, and neighborhood growth.</p>
+            </article>
+            <article class="featured-card" data-category="Sports">
+              <span>Sports · Public</span>
+              <h3>Former striker vs data analyst</h3>
+              <p>Whether expected-goals models are changing how fans judge players.</p>
+            </article>
+            <article class="featured-card" data-category="Culture">
+              <span>Culture · Public</span>
+              <h3>Film critic vs creator economy founder</h3>
+              <p>A timed debate on whether short-form video is weakening cinema.</p>
+            </article>
+          </div>
+        </section>
 
-          <div class="profile-stat-row" id="profile-stats"></div>
-
-          <div class="profile-columns">
+        <section class="open-seats-panel" aria-label="Open debate seats">
+          <div class="matches-head">
             <div>
-              <h3>Top interests</h3>
-              <div class="chip-list" id="profile-topics"></div>
-            </div>
-            <div>
-              <h3>Matching signals</h3>
-              <dl class="signal-list" id="profile-signals"></dl>
+              <p class="eyebrow">Open seats</p>
+              <h2>Waiting for opponents</h2>
             </div>
           </div>
 
-          <div class="suggested-block">
-            <h3>Suggested debates</h3>
-            <ol class="suggested-list" id="profile-suggestions"></ol>
+          <div class="open-seat-grid">
+            <button class="open-seat-card" type="button" data-category="Technology" data-home-topic="Should facial recognition be banned in public spaces?">
+              <span>Needs Oppose · 1v1</span>
+              <strong>Should facial recognition be banned in public spaces?</strong>
+              <small>Public · Timed rounds · Evidence encouraged</small>
+            </button>
+            <button class="open-seat-card" type="button" data-category="Sports" data-home-topic="Should college athletes be paid?">
+              <span>Needs Affirm · 2v2</span>
+              <strong>Should college athletes be paid?</strong>
+              <small>Public · Team debate · Casual pace</small>
+            </button>
+            <button class="open-seat-card" type="button" data-category="Technology" data-home-topic="Should AI-generated content be labeled everywhere?">
+              <span>Needs Oppose · Panel</span>
+              <strong>Should AI-generated content be labeled everywhere?</strong>
+              <small>Public · 3 per side · Source-heavy</small>
+            </button>
           </div>
         </section>
 
         <section class="matches-panel" aria-label="Recommended debate matches">
           <div class="matches-head">
             <div>
-              <p class="eyebrow">Matching engine</p>
-              <h2>Recommended topics</h2>
+              <p class="eyebrow">Recommended</p>
+              <h2>For your style</h2>
             </div>
             <span class="source-badge" id="match-source">Loading</span>
           </div>
@@ -184,6 +214,90 @@
         </section>
       </section>
     </main>
+
+    <section class="create-debate-overlay" id="create-debate-overlay" hidden aria-label="Create debate setup">
+      <div class="create-debate-modal" role="dialog" aria-modal="true" aria-labelledby="create-debate-title">
+        <header class="create-modal-head">
+          <div>
+            <p class="eyebrow">Create debate</p>
+            <h2 id="create-debate-title">Set the room</h2>
+          </div>
+          <button class="icon-button" type="button" id="create-debate-close" aria-label="Close create debate">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4 6.4 5Z" />
+            </svg>
+          </button>
+        </header>
+
+        <div class="create-modal-grid">
+          <label class="field">
+            <span>Topic</span>
+            <input id="create-topic" type="text" placeholder="Facial recognition, college sports, AI art..." />
+          </label>
+
+          <label class="field">
+            <span>Visibility</span>
+            <select id="create-visibility">
+              <option value="Public">Public</option>
+              <option value="Private">Private</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Format</span>
+            <select id="create-format">
+              <option value="1v1">1v1</option>
+              <option value="2v2">2v2</option>
+              <option value="Panel">Panel</option>
+              <option value="Free-for-all">Free-for-all</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>People per side</span>
+            <select id="create-side-size">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Pace</span>
+            <select id="create-pace">
+              <option value="Timed rounds">Timed rounds</option>
+              <option value="Slow evidence review">Slow evidence review</option>
+              <option value="Rapid fire">Rapid fire</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Evidence rule</span>
+            <select id="create-evidence">
+              <option value="Evidence encouraged">Evidence encouraged</option>
+              <option value="Source required">Source required</option>
+              <option value="Casual">Casual</option>
+            </select>
+          </label>
+        </div>
+
+        <section class="create-match-preview" aria-label="Open debate matches">
+          <div class="matches-head">
+            <div>
+              <p class="eyebrow">Possible matches</p>
+              <h3>Open rooms like this</h3>
+            </div>
+            <span class="source-badge" id="create-match-count">Scanning</span>
+          </div>
+          <div class="create-match-list" id="create-match-list"></div>
+        </section>
+
+        <footer class="create-modal-actions">
+          <button class="secondary-button compact-button" type="button" id="create-debate-cancel">Cancel</button>
+          <button class="primary-button compact-button" type="button" id="create-debate-continue">Create new room</button>
+        </footer>
+      </div>
+    </section>
 
     <main class="profile-shell" id="profile-view" hidden>
       <header class="app-header">
