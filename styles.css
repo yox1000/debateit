@@ -74,7 +74,9 @@ button:hover {
 .brand-button {
   border: 0;
   background: transparent;
-  font: inherit;
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 800;
   cursor: pointer;
 }
 
@@ -427,9 +429,16 @@ h1 {
   cursor: pointer;
 }
 
+.icon-button:hover,
+.icon-button:focus {
+  background: rgba(232, 242, 255, 0.96);
+  outline: none;
+}
+
 .icon-button svg {
   width: 25px;
   height: 25px;
+  fill: currentColor;
 }
 
 .profile-button {
@@ -1101,12 +1110,32 @@ h1 {
   margin-bottom: 16px;
 }
 
+.search-icon {
+  position: absolute;
+  z-index: 2;
+  left: 16px;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  color: var(--blue);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.search-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
 .topic-search-panel .search-field {
   margin-bottom: 0;
 }
 
 .topic-search-panel input {
   min-height: 54px;
+  padding-left: 48px;
   border-color: rgba(51, 95, 159, 0.24);
   background: rgba(255, 255, 255, 0.96);
   font-weight: 750;
@@ -1194,6 +1223,10 @@ h1 {
   padding: 0 12px;
 }
 
+.custom-option-field {
+  grid-column: span 2;
+}
+
 .create-match-preview {
   display: grid;
   gap: 10px;
@@ -1207,6 +1240,13 @@ h1 {
 .create-match-preview h3 {
   margin: 0;
   font-size: 1rem;
+}
+
+.form-error {
+  margin: 0 0 12px;
+  color: #a83232;
+  font-size: 0.86rem;
+  font-weight: 800;
 }
 
 .create-match-list {
@@ -1297,6 +1337,19 @@ h1 {
   color: var(--blue-dark);
   background: rgba(232, 242, 255, 0.95);
   outline: none;
+}
+
+.create-suggestion-row {
+  background: rgba(248, 252, 255, 0.98);
+}
+
+.create-suggestion-row .suggestion-title {
+  color: var(--blue-dark);
+}
+
+.create-topic-icon {
+  color: var(--teal);
+  background: rgba(232, 249, 246, 0.9);
 }
 
 .suggestion-row .category-icon {
@@ -1494,7 +1547,33 @@ h1 {
   display: flex;
   justify-content: space-between;
   gap: 14px;
+  align-items: center;
   margin-bottom: 12px;
+}
+
+.panel-close-button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(52, 82, 119, 0.14);
+  border-radius: 50%;
+  color: var(--muted);
+  background: rgba(245, 249, 253, 0.9);
+  cursor: pointer;
+}
+
+.panel-close-button:hover,
+.panel-close-button:focus {
+  color: var(--blue-dark);
+  background: rgba(232, 242, 255, 0.96);
+  outline: none;
+}
+
+.panel-close-button svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
 }
 
 .notification-head span {
@@ -1780,7 +1859,7 @@ h1 {
 
 .phase-track {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   margin-bottom: 10px;
 }

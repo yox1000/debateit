@@ -3,6 +3,9 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const database = require("./database");
+const { getPublicDir, serveStatic } = require("./server/static");
+const { primeSearchEmbeddings, searchWithEmbeddings } = require("./server/embedding-search");
+const { createSearchLimiter } = require("./server/search-limits");
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, ".env");
@@ -39,26 +42,24 @@ loadEnvFile();
 
 const port = Number(process.env.PORT || 8080);
 const host = process.env.HOST || "127.0.0.1";
-const distDir = path.join(__dirname, "dist");
-const publicDir = fs.existsSync(path.join(distDir, "index.html")) ? distDir : __dirname;
+const publicDir = getPublicDir(__dirname);
 const deepSeekApiKey = process.env.DEEPSEEK_API_KEY || "";
 const deepSeekModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+const embeddingConfig = {
+  provider: process.env.EMBEDDINGS_PROVIDER || "openai-compatible",
+  apiUrl: process.env.EMBEDDINGS_API_URL || "",
+  apiKey: process.env.EMBEDDINGS_API_KEY || process.env.OPENAI_API_KEY || "",
+  model: process.env.EMBEDDINGS_MODEL || "text-embedding-3-small",
+};
 const courtListenerApiToken = process.env.COURTLISTENER_API_TOKEN || "";
 const topicCatalog = JSON.parse(fs.readFileSync(path.join(__dirname, "data", "debate-topics.json"), "utf8"));
+const openDebateRooms = JSON.parse(fs.readFileSync(path.join(__dirname, "data", "open-debate-rooms.json"), "utf8"));
 const topicCatalogVersion = crypto.createHash("sha1").update(JSON.stringify(topicCatalog)).digest("hex").slice(0, 12);
 const sessionCookieName = "debateit_session";
 const promptsDir = path.join(__dirname, "prompts");
 const aiRepairEnabled = process.env.AI_REPAIR_ENABLED !== "false";
 const factCheckSourceVersion = "research-page-v2";
-
-const contentTypes = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-};
+const searchLimiter = createSearchLimiter();
 
 function loadPrompt(promptName) {
   const filePath = path.join(promptsDir, `${promptName}.v1.json`);
@@ -1485,46 +1486,6 @@ async function createDeepSeekDebateRecap(payload) {
   });
 }
 
-function serveStatic(request, response) {
-  const requestUrl = new URL(request.url, `http://${request.headers.host}`);
-  const pathname = decodeURIComponent(requestUrl.pathname);
-  const safePath = pathname === "/" ? "/index.html" : pathname;
-  let filePath = path.normalize(path.join(publicDir, safePath));
-
-  if (!filePath.startsWith(publicDir)) {
-    response.writeHead(403);
-    response.end("Forbidden");
-    return;
-  }
-
-  fs.readFile(filePath, (error, data) => {
-    if (error) {
-      if (publicDir === distDir && request.method === "GET" && !path.extname(filePath)) {
-        filePath = path.join(publicDir, "index.html");
-        fs.readFile(filePath, (fallbackError, fallbackData) => {
-          if (fallbackError) {
-            response.writeHead(404);
-            response.end("Not found");
-            return;
-          }
-
-          response.writeHead(200, { "Content-Type": contentTypes[".html"] });
-          response.end(fallbackData);
-        });
-        return;
-      }
-
-      response.writeHead(404);
-      response.end("Not found");
-      return;
-    }
-
-    const type = contentTypes[path.extname(filePath)] || "application/octet-stream";
-    response.writeHead(200, { "Content-Type": type });
-    response.end(data);
-  });
-}
-
 const websocketClients = new Set();
 const websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -2500,6 +2461,89 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && requestUrl.pathname === "/api/open-rooms") {
+    const savedRooms = database.listOpenRooms();
+    const starterRooms = openDebateRooms.map((room, index) => ({
+      id: `starter-room-${index + 1}`,
+      topicId: `starter-room-${index + 1}`,
+      ...room,
+    }));
+    sendJson(response, 200, { rooms: [...savedRooms, ...starterRooms] });
+    return;
+  }
+
+  if (request.method === "GET" && requestUrl.pathname === "/api/search") {
+    try {
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const query = requestUrl.searchParams.get("q") || "";
+      searchLimiter.assertAllowed({ request, user, query });
+      const savedRooms = database.listOpenRooms();
+      const starterRooms = openDebateRooms.map((room, index) => ({
+        id: `starter-room-${index + 1}`,
+        topicId: `starter-room-${index + 1}`,
+        ...room,
+      }));
+      const search = await searchWithEmbeddings({
+        query,
+        topics: topicCatalog,
+        openRooms: [...savedRooms, ...starterRooms],
+        database,
+        config: embeddingConfig,
+      });
+      sendJson(response, 200, search);
+    } catch (error) {
+      if (error.statusCode === 503) {
+        sendJson(response, 200, {
+          source: "local-fallback",
+          results: [],
+          reason: error.message,
+        });
+      } else if (error.statusCode === 400 || error.statusCode === 429) {
+        sendJson(response, error.statusCode, {
+          source: "local-fallback",
+          results: [],
+          reason: error.message,
+        });
+      } else {
+        sendError(response, error);
+      }
+    }
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/api/open-rooms") {
+    try {
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const room = database.createOpenRoom({
+        userId: user.id,
+        topicId: payload.topicId,
+        topicTitle: payload.topicTitle,
+        category: payload.category,
+        visibility: payload.visibility,
+        format: payload.format,
+        sideSize: payload.sideSize,
+        pace: payload.pace,
+        evidence: payload.evidence,
+      });
+      sendJson(response, 201, { room });
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
   if (request.method === "POST" && request.url === "/api/matches") {
     try {
       const user = requireAuthenticatedUser(request, response);
@@ -2522,7 +2566,7 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (request.method === "GET" || request.method === "HEAD") {
-    serveStatic(request, response);
+    serveStatic({ request, response, publicDir });
     return;
   }
 
@@ -2535,4 +2579,26 @@ server.on("upgrade", handleWebSocketUpgrade);
 server.listen(port, host, () => {
   console.log(`Debate.it running at http://${host}:${port}`);
   console.log(deepSeekApiKey ? `DeepSeek enabled with ${deepSeekModel}` : "DeepSeek key not set; using mock profiles");
+  const starterRooms = openDebateRooms.map((room, index) => ({
+    id: `starter-room-${index + 1}`,
+    topicId: `starter-room-${index + 1}`,
+    ...room,
+  }));
+
+  primeSearchEmbeddings({
+    topics: topicCatalog,
+    openRooms: [...database.listOpenRooms(), ...starterRooms],
+    database,
+    config: embeddingConfig,
+  })
+    .then((result) => {
+      if (result.source === "embedding") {
+        console.log(`Search embeddings ready: ${result.indexed} documents indexed with ${result.model}`);
+      } else {
+        console.log(`Search embeddings skipped: ${result.reason}`);
+      }
+    })
+    .catch((error) => {
+      console.warn(`Search embeddings warmup failed: ${error.message}`);
+    });
 });

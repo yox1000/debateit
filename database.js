@@ -222,6 +222,24 @@ function initDatabase() {
       UNIQUE(debate_id, user_id, claim_key)
     );
 
+    CREATE TABLE IF NOT EXISTS open_rooms (
+      id TEXT PRIMARY KEY,
+      topic_id TEXT NOT NULL,
+      topic_title TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'General',
+      host_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      host_name TEXT NOT NULL DEFAULT 'Host',
+      visibility TEXT NOT NULL DEFAULT 'Public',
+      format TEXT NOT NULL DEFAULT '1v1',
+      side_size TEXT NOT NULL DEFAULT '1',
+      need TEXT NOT NULL DEFAULT 'opponent',
+      pace TEXT NOT NULL DEFAULT 'Timed rounds',
+      evidence TEXT NOT NULL DEFAULT 'Evidence encouraged',
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS ai_request_logs (
       id TEXT PRIMARY KEY,
       feature TEXT NOT NULL,
@@ -238,6 +256,16 @@ function initDatabase() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS search_embeddings (
+      cache_key TEXT PRIMARY KEY,
+      provider TEXT NOT NULL DEFAULT 'openai-compatible',
+      model TEXT NOT NULL,
+      text TEXT NOT NULL,
+      vector_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_match_requests_lookup
       ON match_requests(topic_id, stance, status);
     CREATE INDEX IF NOT EXISTS idx_sessions_user
@@ -252,8 +280,12 @@ function initDatabase() {
       ON ai_insights(debate_id, insight_type, transcript_hash);
     CREATE INDEX IF NOT EXISTS idx_fact_check_reviews_debate
       ON fact_check_reviews(debate_id, user_id);
+    CREATE INDEX IF NOT EXISTS idx_open_rooms_status
+      ON open_rooms(status, created_at);
     CREATE INDEX IF NOT EXISTS idx_ai_request_logs_feature
       ON ai_request_logs(feature, created_at);
+    CREATE INDEX IF NOT EXISTS idx_search_embeddings_model
+      ON search_embeddings(model, updated_at);
   `);
 
   ensureColumn("match_requests", "metadata_json", "TEXT NOT NULL DEFAULT '{}'");
@@ -356,6 +388,30 @@ function toProposal(row) {
   };
 }
 
+function toOpenRoom(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    topicId: row.topic_id,
+    topic: row.topic_title,
+    category: row.category,
+    hostUserId: row.host_user_id,
+    host: row.host_name,
+    visibility: row.visibility,
+    format: row.format,
+    sideSize: row.side_size,
+    need: row.need,
+    pace: row.pace,
+    evidence: row.evidence,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function getUserByCredentials(email = "", password = "") {
   const row = db.prepare("SELECT * FROM users WHERE email = ?").get(String(email).trim());
 
@@ -384,6 +440,112 @@ function createUser({ name, email = "", password = "" }) {
   `).run(id, String(name || "New Debater").trim(), String(email).trim(), hashPassword(password), createdAt, createdAt);
 
   return getUserById(id);
+}
+
+function listOpenRooms(limit = 50) {
+  return db
+    .prepare(`
+      SELECT *
+      FROM open_rooms
+      WHERE status = 'open'
+      ORDER BY created_at DESC
+      LIMIT ?
+    `)
+    .all(Math.min(Math.max(Number(limit) || 50, 1), 200))
+    .map(toOpenRoom);
+}
+
+function createOpenRoom({ userId, topicId, topicTitle, category, visibility, format, sideSize, pace, evidence }) {
+  const host = getUserById(userId);
+
+  if (!host) {
+    const error = new Error("User not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const title = String(topicTitle || "").trim();
+
+  if (!title) {
+    const error = new Error("Topic is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const createdAt = nowIso();
+  const id = createId("room");
+  const safeSideSize = String(sideSize || "1").trim();
+  const need = safeSideSize === "1" ? "opponent" : `${safeSideSize} per side`;
+
+  db.prepare(`
+    INSERT INTO open_rooms (
+      id, topic_id, topic_title, category, host_user_id, host_name,
+      visibility, format, side_size, need, pace, evidence, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+  `).run(
+    id,
+    String(topicId || id).trim(),
+    title,
+    String(category || "General").trim() || "General",
+    host.id,
+    host.name || "Host",
+    String(visibility || "Public").trim() || "Public",
+    String(format || "1v1").trim() || "1v1",
+    safeSideSize || "1",
+    need,
+    String(pace || "Timed rounds").trim() || "Timed rounds",
+    String(evidence || "Evidence encouraged").trim() || "Evidence encouraged",
+    createdAt,
+    createdAt,
+  );
+
+  return toOpenRoom(db.prepare("SELECT * FROM open_rooms WHERE id = ?").get(id));
+}
+
+function getSearchEmbedding(cacheKey) {
+  const row = db.prepare("SELECT * FROM search_embeddings WHERE cache_key = ?").get(cacheKey);
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    cacheKey: row.cache_key,
+    provider: row.provider,
+    model: row.model,
+    text: row.text,
+    vector: parseJson(row.vector_json, []),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function upsertSearchEmbedding({ cacheKey, provider = "openai-compatible", model, text, vector }) {
+  const updatedAt = nowIso();
+  const existing = getSearchEmbedding(cacheKey);
+  const createdAt = existing?.createdAt || updatedAt;
+
+  db.prepare(`
+    INSERT INTO search_embeddings (
+      cache_key, provider, model, text, vector_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(cache_key) DO UPDATE SET
+      provider = excluded.provider,
+      model = excluded.model,
+      text = excluded.text,
+      vector_json = excluded.vector_json,
+      updated_at = excluded.updated_at
+  `).run(
+    cacheKey,
+    String(provider || "openai-compatible"),
+    String(model || ""),
+    String(text || ""),
+    json(vector || [], []),
+    createdAt,
+    updatedAt,
+  );
+
+  return getSearchEmbedding(cacheKey);
 }
 
 function createSession(userId) {
@@ -1414,6 +1576,7 @@ module.exports = {
   clearDebateRuntimeData,
   createMessage,
   createMatchRequest,
+  createOpenRoom,
   createSession,
   createUser,
   deleteSession,
@@ -1421,10 +1584,12 @@ module.exports = {
   listDebateParticipants,
   listAiRequestLogs,
   listFactCheckReviews,
+  listOpenRooms,
   getStatus,
   getAiInsight,
   getDebateContext,
   getDebateTurnState,
+  getSearchEmbedding,
   getUserByCredentials,
   getUserById,
   getUserBySession,
@@ -1437,5 +1602,6 @@ module.exports = {
   saveAiInsight,
   scoreAiRequestLog,
   updateUserProfile,
+  upsertSearchEmbedding,
   upsertFactCheckReview,
 };

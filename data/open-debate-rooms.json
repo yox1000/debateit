@@ -1,0 +1,46 @@
+[
+  {
+    "topic": "Should facial recognition be banned in public spaces?",
+    "category": "Technology",
+    "visibility": "Public",
+    "format": "1v1",
+    "sideSize": "1",
+    "pace": "Timed rounds",
+    "evidence": "Evidence encouraged",
+    "need": "Oppose",
+    "host": "Civil Liberties Forum"
+  },
+  {
+    "topic": "Should college athletes be paid?",
+    "category": "Sports",
+    "visibility": "Public",
+    "format": "2v2",
+    "sideSize": "2",
+    "pace": "Rapid fire",
+    "evidence": "Casual",
+    "need": "Affirm",
+    "host": "Saturday Sports Table"
+  },
+  {
+    "topic": "Should AI-generated content be labeled everywhere?",
+    "category": "Technology",
+    "visibility": "Public",
+    "format": "Panel",
+    "sideSize": "3",
+    "pace": "Slow evidence review",
+    "evidence": "Source required",
+    "need": "Oppose",
+    "host": "Creator Policy Room"
+  },
+  {
+    "topic": "Should schools ban smartphones during class?",
+    "category": "Education",
+    "visibility": "Public",
+    "format": "1v1",
+    "sideSize": "1",
+    "pace": "Timed rounds",
+    "evidence": "Evidence encouraged",
+    "need": "Affirm",
+    "host": "Education Lab"
+  }
+]

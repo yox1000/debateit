@@ -2,6 +2,10 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "smoke": "node scripts/smoke-test.js",
+    "test:fuzzy": "node --no-warnings scripts/test-fuzzy-search.mjs",
     "start": "node server.js"
   },
   "dependencies": {
@@ -9,5 +13,11 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "vite": "^8.2.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.9.6"
   }
 }
