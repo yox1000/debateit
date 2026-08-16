@@ -71,6 +71,13 @@ button:hover {
   font-weight: 800;
 }
 
+.brand-button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
 .brand-emblem {
   width: 42px;
   height: 42px;
@@ -1423,7 +1430,9 @@ h1 {
 }
 
 .notification-center {
-  position: relative;
+  position: fixed;
+  top: 78px;
+  right: max(14px, calc((100vw - 1080px) / 2));
   z-index: 30;
 }
 

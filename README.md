@@ -4,11 +4,36 @@ Responsive prototype for a debate app.
 
 ## Run locally
 
+Install frontend dependencies once:
+
 ```bash
+npm install
+```
+
+For the normal local app served by the Node backend:
+
+```bash
+npm run build
 node server.js
 ```
 
 Open `http://localhost:8080`.
+
+For frontend-only React development with Vite hot reload, run the backend in
+one terminal:
+
+```bash
+node server.js
+```
+
+Then run Vite in another terminal:
+
+```bash
+npm run dev
+```
+
+Open the Vite URL, usually `http://127.0.0.1:5173`. Vite proxies `/api` and
+`/ws` to the Node backend.
 
 To use DeepSeek for AI profile generation, topic matching, co-pilot analysis,
 post-debate recaps, and citation planning:

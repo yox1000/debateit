@@ -39,7 +39,8 @@ loadEnvFile();
 
 const port = Number(process.env.PORT || 8080);
 const host = process.env.HOST || "127.0.0.1";
-const publicDir = __dirname;
+const distDir = path.join(__dirname, "dist");
+const publicDir = fs.existsSync(path.join(distDir, "index.html")) ? distDir : __dirname;
 const deepSeekApiKey = process.env.DEEPSEEK_API_KEY || "";
 const deepSeekModel = process.env.DEEPSEEK_MODEL || "deepseek-chat";
 const courtListenerApiToken = process.env.COURTLISTENER_API_TOKEN || "";
@@ -1488,7 +1489,7 @@ function serveStatic(request, response) {
   const requestUrl = new URL(request.url, `http://${request.headers.host}`);
   const pathname = decodeURIComponent(requestUrl.pathname);
   const safePath = pathname === "/" ? "/index.html" : pathname;
-  const filePath = path.normalize(path.join(publicDir, safePath));
+  let filePath = path.normalize(path.join(publicDir, safePath));
 
   if (!filePath.startsWith(publicDir)) {
     response.writeHead(403);
@@ -1498,6 +1499,21 @@ function serveStatic(request, response) {
 
   fs.readFile(filePath, (error, data) => {
     if (error) {
+      if (publicDir === distDir && request.method === "GET" && !path.extname(filePath)) {
+        filePath = path.join(publicDir, "index.html");
+        fs.readFile(filePath, (fallbackError, fallbackData) => {
+          if (fallbackError) {
+            response.writeHead(404);
+            response.end("Not found");
+            return;
+          }
+
+          response.writeHead(200, { "Content-Type": contentTypes[".html"] });
+          response.end(fallbackData);
+        });
+        return;
+      }
+
       response.writeHead(404);
       response.end("Not found");
       return;
