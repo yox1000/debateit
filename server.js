@@ -236,6 +236,23 @@ function getAuthenticatedUser(request) {
   return database.getUserBySession(getSessionId(request));
 }
 
+function getStarterOpenRooms() {
+  return openDebateRooms.map((room, index) => ({
+    id: `starter-room-${index + 1}`,
+    topicId: `starter-room-${index + 1}`,
+    ...room,
+  }));
+}
+
+function listVisibleOpenRooms(userId = "") {
+  return [...database.listOpenRoomsForUser(userId), ...getStarterOpenRooms()]
+    .map((room) => ({
+      ...room,
+      friendHost: database.getFriendStatus(userId, room.hostUserId) === "friends",
+    }))
+    .sort((a, b) => Number(Boolean(b.friendHost)) - Number(Boolean(a.friendHost)) || new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+}
+
 function requireAuthenticatedUser(request, response) {
   const user = getAuthenticatedUser(request);
 
@@ -1946,6 +1963,26 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  const publicUserMatch = requestUrl.pathname.match(/^\/api\/public-users\/([^/]+)$/);
+
+  if (request.method === "GET" && publicUserMatch) {
+    const viewer = requireAuthenticatedUser(request, response);
+
+    if (!viewer) {
+      return;
+    }
+
+    const profile = database.getPublicUserProfile(publicUserMatch[1], viewer.id);
+
+    if (!profile) {
+      sendJson(response, 404, { error: "User not found." });
+      return;
+    }
+
+    sendJson(response, 200, { profile });
+    return;
+  }
+
   const profileMatch = requestUrl.pathname.match(/^\/api\/users\/([^/]+)\/profile$/);
 
   if (request.method === "PUT" && profileMatch) {
@@ -1984,6 +2021,115 @@ const server = http.createServer(async (request, response) => {
 
     if (user) {
       sendJson(response, 200, { proposals: database.listProposalsForUser(user.id) });
+    }
+    return;
+  }
+
+  const socialMatch = requestUrl.pathname.match(/^\/api\/users\/([^/]+)\/social$/);
+
+  if (request.method === "GET" && socialMatch) {
+    const user = requireSameUser(request, response, socialMatch[1]);
+
+    if (user) {
+      sendJson(response, 200, {
+        friends: database.listFriendsForUser(user.id),
+        friendRequests: database.listFriendRequestsForUser(user.id),
+      });
+    }
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/api/friend-requests") {
+    try {
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const body = await readBody(request);
+      const payload = JSON.parse(body || "{}");
+      const result = database.sendFriendRequest(user.id, payload.recipientId);
+      sendJson(response, 201, result);
+
+      if (result.request) {
+        broadcastToUsers([payload.recipientId, user.id], {
+          type: "friend_request_updated",
+          request: result.request,
+        });
+      }
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  const friendAccept = requestUrl.pathname.match(/^\/api\/friend-requests\/([^/]+)\/accept$/);
+
+  if (request.method === "POST" && friendAccept) {
+    try {
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const result = database.acceptFriendRequest(friendAccept[1], user.id);
+      sendJson(response, 200, result);
+      broadcastToUsers([result.request.requesterId, result.request.recipientId], {
+        type: "friend_request_updated",
+        request: result.request,
+      });
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  const friendReject = requestUrl.pathname.match(/^\/api\/friend-requests\/([^/]+)\/reject$/);
+
+  if (request.method === "POST" && friendReject) {
+    try {
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const result = database.rejectFriendRequest(friendReject[1], user.id);
+      sendJson(response, 200, result || { ok: true });
+
+      if (result?.request) {
+        broadcastToUsers([result.request.requesterId, result.request.recipientId], {
+          type: "friend_request_updated",
+          request: result.request,
+        });
+      }
+    } catch (error) {
+      sendError(response, error);
+    }
+    return;
+  }
+
+  const unfriendMatch = requestUrl.pathname.match(/^\/api\/friends\/([^/]+)$/);
+
+  if (request.method === "DELETE" && unfriendMatch) {
+    try {
+      const user = requireAuthenticatedUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const result = database.removeFriend(user.id, unfriendMatch[1]);
+      sendJson(response, 200, result);
+      broadcastToUsers([user.id, unfriendMatch[1]], {
+        type: "friend_request_updated",
+        userId: user.id,
+        friendUserId: unfriendMatch[1],
+      });
+    } catch (error) {
+      sendError(response, error);
     }
     return;
   }
@@ -2121,7 +2267,10 @@ const server = http.createServer(async (request, response) => {
     const user = requireDebateParticipant(request, response, debateStateMatch[1]);
 
     if (user) {
-      const debateState = database.getDebateTurnState(debateStateMatch[1]);
+      const debateState = {
+        ...database.getDebateTurnState(debateStateMatch[1]),
+        participants: database.listDebateParticipantsForUser(debateStateMatch[1], user.id),
+      };
       sendJson(response, 200, { debateState });
       broadcastDebate(debateStateMatch[1], {
         type: "debate_state",
@@ -2462,13 +2611,8 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (request.method === "GET" && requestUrl.pathname === "/api/open-rooms") {
-    const savedRooms = database.listOpenRooms();
-    const starterRooms = openDebateRooms.map((room, index) => ({
-      id: `starter-room-${index + 1}`,
-      topicId: `starter-room-${index + 1}`,
-      ...room,
-    }));
-    sendJson(response, 200, { rooms: [...savedRooms, ...starterRooms] });
+    const user = getAuthenticatedUser(request);
+    sendJson(response, 200, { rooms: listVisibleOpenRooms(user?.id || "") });
     return;
   }
 
@@ -2482,16 +2626,10 @@ const server = http.createServer(async (request, response) => {
 
       const query = requestUrl.searchParams.get("q") || "";
       searchLimiter.assertAllowed({ request, user, query });
-      const savedRooms = database.listOpenRooms();
-      const starterRooms = openDebateRooms.map((room, index) => ({
-        id: `starter-room-${index + 1}`,
-        topicId: `starter-room-${index + 1}`,
-        ...room,
-      }));
       const search = await searchWithEmbeddings({
         query,
         topics: topicCatalog,
-        openRooms: [...savedRooms, ...starterRooms],
+        openRooms: listVisibleOpenRooms(user.id),
         database,
         config: embeddingConfig,
       });
@@ -2579,15 +2717,10 @@ server.on("upgrade", handleWebSocketUpgrade);
 server.listen(port, host, () => {
   console.log(`Debate.it running at http://${host}:${port}`);
   console.log(deepSeekApiKey ? `DeepSeek enabled with ${deepSeekModel}` : "DeepSeek key not set; using mock profiles");
-  const starterRooms = openDebateRooms.map((room, index) => ({
-    id: `starter-room-${index + 1}`,
-    topicId: `starter-room-${index + 1}`,
-    ...room,
-  }));
 
   primeSearchEmbeddings({
     topics: topicCatalog,
-    openRooms: [...database.listOpenRooms(), ...starterRooms],
+    openRooms: [...database.listOpenRooms(), ...getStarterOpenRooms()],
     database,
     config: embeddingConfig,
   })

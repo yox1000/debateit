@@ -6,8 +6,8 @@ import { cleanSearchQuery, fuzzyTopicSearch } from "../utils/fuzzySearch.js";
 
 function getSuggestionMeta(suggestion) {
   const prefix = suggestion.kind === "room"
-    ? `Open room - Needs ${suggestion.room?.need || "opponent"}`
-    : ["Related", "Semantic"].includes(suggestion.topic.matchType)
+    ? `${suggestion.room?.friendHost ? "Friend room" : "Open room"} - Needs ${suggestion.room?.need || "opponent"}`
+    : ["Related", "Semantic", "Friend room"].includes(suggestion.topic.matchType)
       ? suggestion.topic.matchType
       : suggestion.topic.category;
   const concepts = suggestion.topic.matchType === "Related" && suggestion.topic.sharedConcepts?.length
@@ -56,7 +56,19 @@ export default function HomeView({ topics, matches, matchSource, debates, openRo
       tags: [room.format, room.pace, room.evidence, room.visibility].filter(Boolean),
       room,
     }));
-    const roomSuggestions = fuzzyTopicSearch(openRoomTopics, query, 4).map((topic) => ({ kind: "room", topic, room: topic.room }));
+    const roomSuggestions = fuzzyTopicSearch(openRoomTopics, query, 4).map((topic) => {
+      const friendBoost = topic.room?.friendHost ? 8 : 0;
+
+      return {
+        kind: "room",
+        topic: {
+          ...topic,
+          searchScore: Math.min(100, topic.searchScore + friendBoost),
+          matchType: topic.room?.friendHost ? "Friend room" : topic.matchType,
+        },
+        room: topic.room,
+      };
+    });
     const seen = new Set();
 
     return [...roomSuggestions, ...topicSuggestions].filter((suggestion) => {

@@ -99,7 +99,7 @@ export default function CreateDebateModal({ initialTopic, topics, openRooms, onC
         </header>
         <div className="create-modal-grid">
           <label className="field"><span>Topic</span><input value={config.topic} onChange={(event) => update("topic", event.target.value)} placeholder="Facial recognition, college sports, AI art..." /></label>
-          <label className="field"><span>Visibility</span><select value={config.visibility} onChange={(event) => update("visibility", event.target.value)}><option>Public</option><option>Private</option></select></label>
+          <label className="field"><span>Who can see it</span><select value={config.visibility} onChange={(event) => update("visibility", event.target.value)}><option>Public</option><option>Followers</option><option>Friends</option></select></label>
           <label className="field"><span>Format</span><select value={config.format} onChange={(event) => update("format", event.target.value)}><option>1v1</option><option>2v2</option><option>Panel</option><option>Free-for-all</option><option>Custom</option></select></label>
           <label className="field"><span>People per side</span><select value={config.sideSize} onChange={(event) => update("sideSize", event.target.value)}><option>1</option><option>2</option><option>3</option></select></label>
           {config.format === "Custom" ? <label className="field custom-option-field"><span>Custom format</span><input value={config.customFormat} onChange={(event) => update("customFormat", event.target.value)} placeholder="Example: Oxford style, judge decides, 3 claims each..." /></label> : null}

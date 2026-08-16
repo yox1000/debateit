@@ -49,6 +49,44 @@ function extractClaims(messages) {
     }));
 }
 
+function getFriendLabel(status) {
+  if (status === "friends") return "Friends";
+  if (status === "outgoing") return "Requested";
+  if (status === "incoming") return "Incoming request";
+  return "Add friend";
+}
+
+function ParticipantStrip({ participants = [], user, onSendFriendRequest, onOpenProfile }) {
+  const otherParticipants = participants.filter((participant) => participant.userId !== user.id);
+
+  if (!otherParticipants.length) {
+    return null;
+  }
+
+  return (
+    <div className="participant-strip">
+      {otherParticipants.map((participant) => {
+        const friendStatus = participant.friendStatus || "none";
+
+        return (
+          <article key={participant.userId} className="participant-chip">
+            <button className="participant-avatar-button" type="button" onClick={() => onOpenProfile(participant.userId)}>
+              {(participant.name || "D").charAt(0).toUpperCase()}
+            </button>
+            <button className="participant-name-button" type="button" onClick={() => onOpenProfile(participant.userId)}>
+              <strong>{participant.name || "Opponent"}</strong>
+              <small>{participant.stats?.level || "Newcomer"} - {participant.stats?.country || "Country unset"}</small>
+            </button>
+            <button className="secondary-button compact-button" type="button" disabled={friendStatus !== "none"} onClick={() => onSendFriendRequest(participant.userId)}>
+              {getFriendLabel(friendStatus)}
+            </button>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 function CopilotPanel({ analysis, factCheck, annotations, messages, loadingAi, onTabFactCheck, onRefreshCopilot, onRunFactCheck, onOpenResearch, activeTab, setActiveTab }) {
   const claims = extractClaims(messages);
   const latestClaim = claims.at(-1)?.claim || "";
@@ -127,7 +165,7 @@ function CopilotPanel({ analysis, factCheck, annotations, messages, loadingAi, o
   );
 }
 
-export default function DebateRoom({ debateId, user, onHome, onResearch }) {
+export default function DebateRoom({ debateId, user, onHome, onResearch, onSendFriendRequest, onOpenProfile }) {
   const [state, setState] = useState(null);
   const [messages, setMessages] = useState([]);
   const [annotations, setAnnotations] = useState([]);
@@ -272,9 +310,8 @@ export default function DebateRoom({ debateId, user, onHome, onResearch }) {
     <main className="room-shell">
       <section className="room-panel">
         <button className="secondary-button compact-button" type="button" onClick={onHome}>Home</button>
-        <p className="eyebrow">Active debate</p>
         <h1>{state?.topicTitle || "Debate"}</h1>
-        <p className="profile-summary">{state?.status === "closed" || state?.isFinished ? "Debate finished" : `${state?.phaseLabel || "Opening"}: ${state?.turnUserName || "Debater"} is up.`}</p>
+        <ParticipantStrip participants={state?.participants || []} user={user} onSendFriendRequest={onSendFriendRequest} onOpenProfile={onOpenProfile} />
         <div className="debate-room-grid">
           <section className="chat-stack">
             <div className="debate-format">

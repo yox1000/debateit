@@ -178,7 +178,8 @@ async function searchWithEmbeddings({ query, topics, openRooms, database, config
   const results = candidates
     .map((candidate, index) => {
       const similarity = cosineSimilarity(queryVector, vectors[index + 1] || []);
-      const score = Math.max(0, Math.min(100, Math.round(similarity * 100)));
+      const friendBoost = candidate.kind === "room" && candidate.room?.friendHost ? 8 : 0;
+      const score = Math.max(0, Math.min(100, Math.round(similarity * 100) + friendBoost));
 
       return {
         kind: candidate.kind,
@@ -187,6 +188,7 @@ async function searchWithEmbeddings({ query, topics, openRooms, database, config
         category: candidate.category,
         searchScore: score,
         matchType: candidate.kind === "room" ? "Open room" : "Semantic",
+        friendBoosted: Boolean(friendBoost),
         room: candidate.room,
         topic: candidate.topic,
       };

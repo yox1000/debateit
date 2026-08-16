@@ -1,6 +1,55 @@
 import { useEffect, useState } from "react";
 
-export default function PanelOverlay({ panel, user, debates, proposals, onClose, onAccept, onReject, onOpenDebate }) {
+function getFriendLabel(status) {
+  if (status === "friends") return "Friends";
+  if (status === "outgoing") return "Requested";
+  if (status === "incoming") return "";
+  return "Add friend";
+}
+
+function UserActionCard({ person, user, onSendFriendRequest, onOpenProfile, hideIncomingAction = false }) {
+  if (!person || person.userId === user.id || person.id === user.id) {
+    return null;
+  }
+
+  const userId = person.userId || person.id;
+  const stats = person.stats || {};
+  const friendStatus = person.friendStatus || "none";
+  const disabled = friendStatus !== "none";
+  const label = getFriendLabel(friendStatus);
+
+  return (
+    <div className="user-action-card">
+      <button className="user-link-button" type="button" onClick={() => onOpenProfile(userId)}>
+        <span>{(person.name || stats.name || "D").charAt(0).toUpperCase()}</span>
+        <strong>{person.name || stats.name || "Opponent"}</strong>
+      </button>
+      <small>{stats.level || "Newcomer"} - {stats.country || "Country unset"}</small>
+      {label && !(hideIncomingAction && friendStatus === "incoming") ? (
+        <button className="secondary-button compact-button" type="button" disabled={disabled} onClick={() => onSendFriendRequest(userId)}>
+          {label}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+export default function PanelOverlay({
+  panel,
+  user,
+  debates,
+  proposals,
+  friends,
+  friendRequests,
+  onClose,
+  onAccept,
+  onReject,
+  onSendFriendRequest,
+  onOpenProfile,
+  onAcceptFriendRequest,
+  onRejectFriendRequest,
+  onOpenDebate,
+}) {
   const [filters, setFilters] = useState(new Set());
 
   useEffect(() => {
@@ -26,6 +75,27 @@ export default function PanelOverlay({ panel, user, debates, proposals, onClose,
         </div>
         {panel.open === "mail" ? (
           <div className="notification-list">
+            {friendRequests.length ? (
+              <section className="friend-request-list">
+                <p className="eyebrow">Friend requests</p>
+                {friendRequests.map((request) => {
+                  const incoming = request.recipientId === user.id;
+                  const other = incoming ? request.requester : request.recipient;
+
+                  return (
+                    <article key={request.id} className="potential-match-card">
+                      <div className="potential-match-row">
+                        <UserActionCard person={{ ...other, userId: other.id, friendStatus: incoming ? "incoming" : "outgoing" }} user={user} onSendFriendRequest={onSendFriendRequest} onOpenProfile={onOpenProfile} hideIncomingAction />
+                      </div>
+                      <div className="mini-actions">
+                        {incoming ? <button className="mini-action accept-action" type="button" onClick={() => onAcceptFriendRequest(request.id)}>Accept</button> : <button className="mini-action ignore-action" type="button" disabled>Sent</button>}
+                        <button className="mini-action deny-action" type="button" onClick={() => onRejectFriendRequest(request.id)}>{incoming ? "Reject" : "Cancel"}</button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </section>
+            ) : null}
             {proposals.length ? proposals.map((proposal) => {
               const accepted = proposal.acceptedBy?.includes(user.id);
               const opponent = proposal.users?.find((item) => item.userId !== user.id);
@@ -35,17 +105,18 @@ export default function PanelOverlay({ panel, user, debates, proposals, onClose,
                     <div>
                       <span className="source-badge">{accepted ? "Waiting" : "Potential match"}</span>
                       <h3>{proposal.topicTitle}</h3>
-                      <p>{opponent?.profile?.name || "Opponent"} - {opponent?.profile?.level || "Newcomer"} - {opponent?.profile?.country || "Country unset"}</p>
+                      <UserActionCard person={opponent} user={user} onSendFriendRequest={onSendFriendRequest} onOpenProfile={onOpenProfile} />
                     </div>
                   </div>
-                  <div className="notification-actions">
-                    <button className="accept-button" type="button" disabled={accepted} onClick={() => onAccept(proposal.id)}>{accepted ? "Accepted" : "Accept"}</button>
-                    <button className="secondary-button compact-button" type="button" onClick={onClose}>Ignore</button>
-                    <button className="reject-button" type="button" onClick={() => onReject(proposal.id)}>Deny</button>
+                  <div className="mini-actions">
+                    <button className="mini-action accept-action" type="button" disabled={accepted} onClick={() => onAccept(proposal.id)}>{accepted ? "Accepted" : "Accept"}</button>
+                    <button className="mini-action ignore-action" type="button" onClick={onClose}>Ignore</button>
+                    <button className="mini-action deny-action" type="button" onClick={() => onReject(proposal.id)}>Deny</button>
                   </div>
                 </article>
               );
-            }) : <p className="empty-note">No match notifications.</p>}
+            }) : friendRequests.length ? null : <p className="empty-note">No match notifications.</p>}
+            {friends.length ? <p className="empty-note">{friends.length} friend{friends.length === 1 ? "" : "s"} connected.</p> : null}
           </div>
         ) : (
           <div className="notification-list">

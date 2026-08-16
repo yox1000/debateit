@@ -791,6 +791,40 @@ h1 {
   font-weight: 850;
 }
 
+.public-profile-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin: 18px 0;
+  padding: 14px;
+  border: 1px solid rgba(52, 82, 119, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.public-profile-hero > span {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--blue);
+  font-size: 1.1rem;
+  font-weight: 900;
+}
+
+.public-profile-hero h1,
+.public-profile-hero p {
+  margin: 0;
+}
+
+.public-profile-hero p:not(.eyebrow) {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .signal-list {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -1718,6 +1752,116 @@ h1 {
 
 .notification-actions .compact-button:last-child {
   grid-column: 1 / -1;
+}
+
+.friend-request-list {
+  display: grid;
+  gap: 9px;
+}
+
+.user-action-card {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.user-link-button {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-link-button span,
+.participant-avatar-button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.user-link-button strong {
+  overflow: hidden;
+  font-size: 0.92rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-action-card small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.participant-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+
+.participant-chip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  padding: 9px;
+  border: 1px solid rgba(52, 82, 119, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.participant-avatar-button {
+  border: 0;
+  cursor: pointer;
+}
+
+.participant-name-button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.participant-name-button {
+  min-width: 0;
+  padding: 0;
+  color: var(--ink);
+  text-align: left;
+}
+
+.participant-name-button:hover strong,
+.participant-name-button:focus strong {
+  color: var(--blue-dark);
+}
+
+.participant-name-button:focus {
+  outline: none;
+}
+
+.participant-chip strong,
+.participant-chip small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.participant-chip small {
+  color: var(--muted);
+  font-size: 0.76rem;
 }
 
 .compact-button {

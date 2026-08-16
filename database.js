@@ -240,6 +240,25 @@ function initDatabase() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS friend_requests (
+      id TEXT PRIMARY KEY,
+      requester_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      recipient_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK(requester_id <> recipient_id),
+      UNIQUE(requester_id, recipient_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS friendships (
+      user_a_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_b_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(user_a_id, user_b_id),
+      CHECK(user_a_id <> user_b_id)
+    );
+
     CREATE TABLE IF NOT EXISTS ai_request_logs (
       id TEXT PRIMARY KEY,
       feature TEXT NOT NULL,
@@ -282,6 +301,10 @@ function initDatabase() {
       ON fact_check_reviews(debate_id, user_id);
     CREATE INDEX IF NOT EXISTS idx_open_rooms_status
       ON open_rooms(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_friend_requests_recipient
+      ON friend_requests(recipient_id, status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_friendships_user_b
+      ON friendships(user_b_id);
     CREATE INDEX IF NOT EXISTS idx_ai_request_logs_feature
       ON ai_request_logs(feature, created_at);
     CREATE INDEX IF NOT EXISTS idx_search_embeddings_model
@@ -412,6 +435,45 @@ function toOpenRoom(row) {
   };
 }
 
+function normalizeFriendPair(userAId, userBId) {
+  return [String(userAId), String(userBId)].sort();
+}
+
+function toFriendRequest(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    requesterId: row.requester_id,
+    recipientId: row.recipient_id,
+    status: row.status,
+    requester: {
+      id: row.requester_id,
+      name: row.requester_name || getUserName(row.requester_id),
+      stats: getUserStats(row.requester_id),
+    },
+    recipient: {
+      id: row.recipient_id,
+      name: row.recipient_name || getUserName(row.recipient_id),
+      stats: getUserStats(row.recipient_id),
+    },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function areFriends(userAId, userBId) {
+  if (!userAId || !userBId || userAId === userBId) {
+    return false;
+  }
+
+  const [userA, userB] = normalizeFriendPair(userAId, userBId);
+
+  return Boolean(db.prepare("SELECT 1 FROM friendships WHERE user_a_id = ? AND user_b_id = ?").get(userA, userB));
+}
+
 function getUserByCredentials(email = "", password = "") {
   const row = db.prepare("SELECT * FROM users WHERE email = ?").get(String(email).trim());
 
@@ -500,6 +562,272 @@ function createOpenRoom({ userId, topicId, topicTitle, category, visibility, for
   );
 
   return toOpenRoom(db.prepare("SELECT * FROM open_rooms WHERE id = ?").get(id));
+}
+
+function listOpenRoomsForUser(userId = "") {
+  const rooms = listOpenRooms(200);
+
+  return rooms.filter((room) => {
+    if (room.visibility === "Public") {
+      return true;
+    }
+
+    if (room.hostUserId === userId) {
+      return true;
+    }
+
+    if (room.visibility === "Friends") {
+      return areFriends(userId, room.hostUserId);
+    }
+
+    return false;
+  });
+}
+
+function getFriendStatus(currentUserId, targetUserId) {
+  if (!currentUserId || !targetUserId) {
+    return "unknown";
+  }
+
+  if (currentUserId === targetUserId) {
+    return "self";
+  }
+
+  if (areFriends(currentUserId, targetUserId)) {
+    return "friends";
+  }
+
+  const request = db
+    .prepare(`
+      SELECT *
+      FROM friend_requests
+      WHERE status = 'pending'
+        AND (
+          (requester_id = ? AND recipient_id = ?)
+          OR (requester_id = ? AND recipient_id = ?)
+        )
+      ORDER BY created_at DESC
+      LIMIT 1
+    `)
+    .get(currentUserId, targetUserId, targetUserId, currentUserId);
+
+  if (!request) {
+    return "none";
+  }
+
+  return request.requester_id === currentUserId ? "outgoing" : "incoming";
+}
+
+function sendFriendRequest(requesterId, recipientId) {
+  if (requesterId === recipientId) {
+    const error = new Error("You cannot friend yourself.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!getUserById(recipientId)) {
+    const error = new Error("User not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (areFriends(requesterId, recipientId)) {
+    return { status: "friends", request: null };
+  }
+
+  const reverse = db
+    .prepare("SELECT * FROM friend_requests WHERE requester_id = ? AND recipient_id = ? AND status = 'pending'")
+    .get(recipientId, requesterId);
+
+  if (reverse) {
+    return acceptFriendRequest(reverse.id, requesterId);
+  }
+
+  const existing = db
+    .prepare("SELECT * FROM friend_requests WHERE requester_id = ? AND recipient_id = ? AND status = 'pending'")
+    .get(requesterId, recipientId);
+
+  if (existing) {
+    return { status: "outgoing", request: toFriendRequest(existing) };
+  }
+
+  const previous = db
+    .prepare("SELECT * FROM friend_requests WHERE requester_id = ? AND recipient_id = ?")
+    .get(requesterId, recipientId);
+
+  if (previous) {
+    const updatedAt = nowIso();
+
+    db.prepare("UPDATE friend_requests SET status = 'pending', updated_at = ? WHERE id = ?").run(updatedAt, previous.id);
+
+    return {
+      status: "outgoing",
+      request: getFriendRequestById(previous.id),
+    };
+  }
+
+  const id = createId("friend-request");
+  const createdAt = nowIso();
+
+  db.prepare(`
+    INSERT INTO friend_requests (id, requester_id, recipient_id, status, created_at, updated_at)
+    VALUES (?, ?, ?, 'pending', ?, ?)
+  `).run(id, requesterId, recipientId, createdAt, createdAt);
+
+  return {
+    status: "outgoing",
+    request: getFriendRequestById(id),
+  };
+}
+
+function getFriendRequestById(requestId) {
+  return toFriendRequest(
+    db
+      .prepare(`
+        SELECT fr.*,
+               requester.name AS requester_name,
+               recipient.name AS recipient_name
+        FROM friend_requests fr
+        JOIN users requester ON requester.id = fr.requester_id
+        JOIN users recipient ON recipient.id = fr.recipient_id
+        WHERE fr.id = ?
+      `)
+      .get(requestId),
+  );
+}
+
+function acceptFriendRequest(requestId, currentUserId) {
+  const request = getFriendRequestById(requestId);
+
+  if (!request || request.status !== "pending") {
+    const error = new Error("Friend request not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (request.recipientId !== currentUserId) {
+    const error = new Error("Only the recipient can accept this request.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const updatedAt = nowIso();
+  const [userA, userB] = normalizeFriendPair(request.requesterId, request.recipientId);
+
+  db.prepare("UPDATE friend_requests SET status = 'accepted', updated_at = ? WHERE id = ?").run(updatedAt, requestId);
+  db.prepare(`
+    INSERT OR IGNORE INTO friendships (user_a_id, user_b_id, created_at)
+    VALUES (?, ?, ?)
+  `).run(userA, userB, updatedAt);
+
+  return {
+    status: "friends",
+    request: getFriendRequestById(requestId),
+  };
+}
+
+function rejectFriendRequest(requestId, currentUserId) {
+  const request = getFriendRequestById(requestId);
+
+  if (!request || request.status !== "pending") {
+    return null;
+  }
+
+  if (request.recipientId !== currentUserId && request.requesterId !== currentUserId) {
+    const error = new Error("You are not part of this friend request.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const status = request.requesterId === currentUserId ? "cancelled" : "rejected";
+  db.prepare("UPDATE friend_requests SET status = ?, updated_at = ? WHERE id = ?").run(status, nowIso(), requestId);
+
+  return {
+    status,
+    request: getFriendRequestById(requestId),
+  };
+}
+
+function listFriendRequestsForUser(userId) {
+  return db
+    .prepare(`
+      SELECT fr.*,
+             requester.name AS requester_name,
+             recipient.name AS recipient_name
+      FROM friend_requests fr
+      JOIN users requester ON requester.id = fr.requester_id
+      JOIN users recipient ON recipient.id = fr.recipient_id
+      WHERE (fr.requester_id = ? OR fr.recipient_id = ?)
+        AND fr.status = 'pending'
+      ORDER BY fr.updated_at DESC
+    `)
+    .all(userId, userId)
+    .map(toFriendRequest);
+}
+
+function listFriendsForUser(userId) {
+  return db
+    .prepare(`
+      SELECT CASE WHEN user_a_id = ? THEN user_b_id ELSE user_a_id END AS friend_id,
+             created_at
+      FROM friendships
+      WHERE user_a_id = ? OR user_b_id = ?
+      ORDER BY created_at DESC
+    `)
+    .all(userId, userId, userId)
+    .map((row) => {
+      const user = getUserById(row.friend_id);
+
+      return {
+        id: user.id,
+        name: user.name,
+        country: user.country,
+        xp: user.xp,
+        stats: getUserStats(user.id),
+        createdAt: row.created_at,
+      };
+    });
+}
+
+function removeFriend(currentUserId, friendUserId) {
+  const [userA, userB] = normalizeFriendPair(currentUserId, friendUserId);
+
+  db.prepare("DELETE FROM friendships WHERE user_a_id = ? AND user_b_id = ?").run(userA, userB);
+  db.prepare(`
+    UPDATE friend_requests
+    SET status = 'removed', updated_at = ?
+    WHERE status = 'accepted'
+      AND (
+        (requester_id = ? AND recipient_id = ?)
+        OR (requester_id = ? AND recipient_id = ?)
+      )
+  `).run(nowIso(), currentUserId, friendUserId, friendUserId, currentUserId);
+
+  return {
+    status: "none",
+  };
+}
+
+function getPublicUserProfile(targetUserId, viewerId) {
+  const user = getUserById(targetUserId);
+
+  if (!user) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    name: user.name,
+    country: user.country,
+    xp: user.xp,
+    interests: user.interests,
+    debateBio: user.debateBio,
+    debateProfile: user.debateProfile,
+    stats: getUserStats(user.id),
+    friendStatus: getFriendStatus(viewerId, user.id),
+    friendCount: listFriendsForUser(user.id).length,
+    createdAt: user.createdAt,
+  };
 }
 
 function getSearchEmbedding(cacheKey) {
@@ -644,6 +972,14 @@ function listDebateParticipants(debateId) {
       name: row.name,
       stance: row.stance,
     }));
+}
+
+function listDebateParticipantsForUser(debateId, viewerId) {
+  return listDebateParticipants(debateId).map((participant) => ({
+    ...participant,
+    stats: getUserStats(participant.userId),
+    friendStatus: getFriendStatus(viewerId, participant.userId),
+  }));
 }
 
 function getDebateRow(debateId) {
@@ -872,7 +1208,14 @@ function listProposalsForUser(userId) {
       ORDER BY p.updated_at DESC
     `)
     .all(userId)
-    .map(toProposal);
+    .map(toProposal)
+    .map((proposal) => ({
+      ...proposal,
+      users: proposal.users.map((proposalUser) => ({
+        ...proposalUser,
+        friendStatus: getFriendStatus(userId, proposalUser.userId),
+      })),
+    }));
 }
 
 function createMatchProposal(currentRequest, opponentRequest) {
@@ -1579,12 +1922,21 @@ module.exports = {
   createOpenRoom,
   createSession,
   createUser,
+  acceptFriendRequest,
+  rejectFriendRequest,
+  removeFriend,
   deleteSession,
+  getFriendStatus,
+  getPublicUserProfile,
   listDebateParticipantIds,
   listDebateParticipants,
+  listDebateParticipantsForUser,
   listAiRequestLogs,
   listFactCheckReviews,
+  listFriendsForUser,
+  listFriendRequestsForUser,
   listOpenRooms,
+  listOpenRoomsForUser,
   getStatus,
   getAiInsight,
   getDebateContext,
@@ -1601,6 +1953,7 @@ module.exports = {
   rejectProposal,
   saveAiInsight,
   scoreAiRequestLog,
+  sendFriendRequest,
   updateUserProfile,
   upsertSearchEmbedding,
   upsertFactCheckReview,

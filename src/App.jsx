@@ -8,6 +8,7 @@ import HomeView from "./views/HomeView.jsx";
 import TopicView from "./views/TopicView.jsx";
 import DebateRoom from "./views/DebateRoom.jsx";
 import ProfileEdit from "./views/ProfileEdit.jsx";
+import PublicProfileView from "./views/PublicProfileView.jsx";
 import FactResearchView from "./views/FactResearchView.jsx";
 import useRealtime from "./hooks/useRealtime.js";
 import Brand from "./components/Brand.jsx";
@@ -28,6 +29,10 @@ function getInitialRoute() {
     return { view: "profile" };
   }
 
+  if (path.startsWith("/users/")) {
+    return { view: "public-profile", userId: decodeURIComponent(path.split("/").at(-1) || "") };
+  }
+
   if (path === "/research") {
     return { view: "research" };
   }
@@ -39,6 +44,7 @@ function routePath(route) {
   if (route.view === "room" && route.debateId) return `/debates/${encodeURIComponent(route.debateId)}`;
   if (route.view === "topic" && route.topicId) return `/topics/${encodeURIComponent(route.topicId)}`;
   if (route.view === "profile") return "/profile";
+  if (route.view === "public-profile" && route.userId) return `/users/${encodeURIComponent(route.userId)}`;
   if (route.view === "research") return "/research";
   return "/";
 }
@@ -53,11 +59,14 @@ export default function App() {
   const [matchSource, setMatchSource] = useState("Loading");
   const [debates, setDebates] = useState([]);
   const [proposals, setProposals] = useState([]);
+  const [friends, setFriends] = useState([]);
+  const [friendRequests, setFriendRequests] = useState([]);
   const [panel, setPanelState] = useState({ open: "" });
   const [selectedTopic, setSelectedTopic] = useState(null);
   const [topicPrompt, setTopicPrompt] = useState("");
   const [createTopic, setCreateTopic] = useState(null);
   const [activeDebateId, setActiveDebateId] = useState(initialRoute.debateId || "");
+  const [activeProfileUserId, setActiveProfileUserId] = useState(initialRoute.userId || "");
   const [activeFactCheck, setActiveFactCheck] = useState(null);
 
   function navigate(route, replace = false) {
@@ -74,12 +83,15 @@ export default function App() {
 
   const refreshState = useCallback(async (nextUser = user) => {
     if (!nextUser) return;
-    const [debateData, proposalData] = await Promise.all([
+    const [debateData, proposalData, socialData] = await Promise.all([
       apiRequest(`/api/users/${encodeURIComponent(nextUser.id)}/debates`),
       apiRequest(`/api/users/${encodeURIComponent(nextUser.id)}/proposals`),
+      apiRequest(`/api/users/${encodeURIComponent(nextUser.id)}/social`),
     ]);
     setDebates(debateData.debates || []);
     setProposals(proposalData.proposals || []);
+    setFriends(socialData.friends || []);
+    setFriendRequests(socialData.friendRequests || []);
   }, [user]);
 
   async function loadMatches(nextUser) {
@@ -129,6 +141,12 @@ export default function App() {
       }
     }
 
+    if (initialRoute.view === "public-profile" && initialRoute.userId) {
+      setActiveProfileUserId(initialRoute.userId);
+      setView("public-profile");
+      return;
+    }
+
     setView(initialRoute.view === "profile" ? "profile" : "home");
   }
 
@@ -149,6 +167,9 @@ export default function App() {
       if (route.view === "topic") {
         setSelectedTopic(topics.find((topic) => topic.id === route.topicId) || null);
       }
+      if (route.view === "public-profile") {
+        setActiveProfileUserId(route.userId || "");
+      }
       setView(route.view);
     }
 
@@ -159,7 +180,7 @@ export default function App() {
   useRealtime({
     userId: user?.id,
     onEvent: useCallback((payload) => {
-      if (["proposal_found", "proposal_updated", "proposal_rejected", "debate_started", "chat_message", "debate_state", "annotation_created"].includes(payload.type)) {
+      if (["proposal_found", "proposal_updated", "proposal_rejected", "debate_started", "chat_message", "debate_state", "annotation_created", "friend_request_updated"].includes(payload.type)) {
         refreshState().catch(() => {});
       }
     }, [refreshState]),
@@ -218,6 +239,36 @@ export default function App() {
     await refreshState();
   }
 
+  async function sendFriendRequest(recipientId) {
+    await apiRequest("/api/friend-requests", {
+      method: "POST",
+      body: JSON.stringify({ recipientId }),
+    });
+    await refreshState();
+  }
+
+  async function acceptFriendRequest(id) {
+    await apiRequest(`/api/friend-requests/${encodeURIComponent(id)}/accept`, { method: "POST", body: "{}" });
+    await refreshState();
+    await loadCatalog();
+  }
+
+  async function rejectFriendRequest(id) {
+    await apiRequest(`/api/friend-requests/${encodeURIComponent(id)}/reject`, { method: "POST", body: "{}" });
+    await refreshState();
+  }
+
+  async function removeFriend(friendUserId) {
+    await apiRequest(`/api/friends/${encodeURIComponent(friendUserId)}`, { method: "DELETE" });
+    await refreshState();
+    await loadCatalog();
+  }
+
+  function openPublicProfile(userId) {
+    setActiveProfileUserId(userId);
+    navigate({ view: "public-profile", userId });
+  }
+
   if (view === "loading") {
     return <main className="auth-shell"><section className="auth-panel"><Brand onHome={() => {}} /><p className="profile-summary">Loading Debate.it...</p></section></main>;
   }
@@ -234,6 +285,10 @@ export default function App() {
     return <ProfileEdit user={user} onUser={setUser} onHome={() => navigate({ view: "home" })} />;
   }
 
+  if (view === "public-profile" && activeProfileUserId) {
+    return <PublicProfileView userId={activeProfileUserId} currentUser={user} onHome={() => navigate({ view: "home" })} onSendFriendRequest={sendFriendRequest} onRemoveFriend={removeFriend} />;
+  }
+
   if (view === "research") {
     return <FactResearchView factCheck={activeFactCheck} onBack={() => navigate({ view: "room", debateId: activeDebateId })} />;
   }
@@ -247,6 +302,8 @@ export default function App() {
       <DebateRoom
         debateId={activeDebateId}
         user={user}
+        onSendFriendRequest={sendFriendRequest}
+        onOpenProfile={openPublicProfile}
         onHome={() => navigate({ view: "home" })}
         onResearch={(factCheck) => {
           setActiveFactCheck(factCheck);
@@ -260,7 +317,7 @@ export default function App() {
     <main className="app-shell">
       <Header
         user={user}
-        panel={{ ...panel, proposals }}
+        panel={{ ...panel, proposals, friendRequests }}
         setPanel={setPanel}
         onHome={() => navigate({ view: "home" })}
         onLogout={logout}
@@ -277,13 +334,19 @@ export default function App() {
         onCreate={(query) => setCreateTopic(query || "")}
       />
       <PanelOverlay
-        panel={{ ...panel, proposals }}
+        panel={{ ...panel, proposals, friendRequests }}
         user={user}
         debates={debates}
         proposals={proposals}
+        friends={friends}
+        friendRequests={friendRequests}
         onClose={() => setPanel("")}
         onAccept={acceptProposal}
         onReject={rejectProposal}
+        onSendFriendRequest={sendFriendRequest}
+        onOpenProfile={openPublicProfile}
+        onAcceptFriendRequest={acceptFriendRequest}
+        onRejectFriendRequest={rejectFriendRequest}
         onOpenDebate={(id) => { setPanel(""); setActiveDebateId(id); navigate({ view: "room", debateId: id }); }}
       />
       {createTopic !== null ? <CreateDebateModal initialTopic={createTopic} topics={topics} openRooms={openRooms} onClose={() => setCreateTopic(null)} onSelectTopic={chooseTopic} onCreateRoom={createOpenRoom} /> : null}
